@@ -21,8 +21,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <rex/platform.h>
+#include <rex/runtime.h>
 #include <rex/system/mod_catalog.h>
-#include <rex/system/mod_config.h>
+#include <rex/system/mod_loadout.h>
 
 namespace {
 
@@ -45,6 +46,19 @@ class TempDirectory {
 
  private:
   std::filesystem::path path_;
+};
+
+class ScopedModsRoot {
+ public:
+  explicit ScopedModsRoot(const std::filesystem::path& root)
+      : previous_(REXCVAR_GET(mods_data_root)) {
+    REXCVAR_SET(mods_data_root, root.string());
+  }
+
+  ~ScopedModsRoot() { REXCVAR_SET(mods_data_root, previous_); }
+
+ private:
+  std::string previous_;
 };
 
 constexpr std::string_view CurrentPlatform() {
@@ -274,6 +288,38 @@ TEST_CASE("catalog reports game, ABI, and platform incompatibility", "[mod_catal
   CHECK(catalog.Find("no-payload")->status == rex::system::ModPackageStatus::kMissingPayload);
 }
 
+TEST_CASE("runtime rescan preserves native active order and load failures", "[mod_catalog]") {
+  TempDirectory temp("rex_mod_catalog_rescan_state");
+  WriteManifest(temp.path() / "active-mod", "active-mod", "active_code");
+  WriteManifest(temp.path() / "failed-mod", "failed-mod", "failed_code");
+
+  ScopedModsRoot mods_root(temp.path());
+  {
+    rex::Runtime runtime(temp.path() / "game", temp.path() / "user");
+    runtime.RescanModCatalog();
+    runtime.MarkModActive("active-mod", true, 4);
+    runtime.MarkModLoadFailed("failed-mod", "native load failed: fixture");
+
+    runtime.RescanModCatalog();
+
+    const auto* active = runtime.mod_catalog().Find("active-mod");
+    const auto* failed = runtime.mod_catalog().Find("failed-mod");
+    REQUIRE(active != nullptr);
+    REQUIRE(failed != nullptr);
+    CHECK(active->active);
+    CHECK(active->active_order == 4);
+    CHECK(failed->status == rex::system::ModPackageStatus::kLoadFailed);
+    CHECK(HasMessage(*failed, "native load failed: fixture"));
+
+    std::filesystem::remove_all(temp.path() / "active-mod");
+    runtime.RescanModCatalog();
+    CHECK(runtime.mod_catalog().Find("active-mod") == nullptr);
+    REQUIRE(runtime.active_mod_states().size() == 1);
+    CHECK(runtime.active_mod_states().front().id == "active-mod");
+    CHECK(runtime.active_mod_states().front().order == 4);
+  }
+}
+
 TEST_CASE("catalog prefers the current qualified loader payload", "[mod_catalog]") {
   TempDirectory temp("rex_mod_catalog_loader_preferred");
   const auto package_root = temp.path() / "preferred-payload";
@@ -305,7 +351,8 @@ TEST_CASE("catalog follows the qualified release fallback", "[mod_catalog]") {
   CHECK(package->plugin_path.filename() == BinaryName("fallback_code"));
 }
 
-TEST_CASE("catalog blocks a flat current postfix that shadows release fallback", "[mod_catalog]") {
+TEST_CASE("catalog ignores flat payloads when resolving the qualified release fallback",
+          "[mod_catalog]") {
   TempDirectory temp("rex_mod_catalog_loader_flat_shadow");
   const auto package_root = temp.path() / "flat-shadow";
   WriteManifest(package_root, "flat-shadow", "shadow_code");
@@ -319,14 +366,9 @@ TEST_CASE("catalog blocks a flat current postfix that shadows release fallback",
   auto catalog = rex::system::DiscoverModCatalog(temp.path(), "1.0.0");
   const auto* package = catalog.Find("flat-shadow");
   REQUIRE(package != nullptr);
-  if (postfix.empty()) {
-    CHECK_FALSE(package->HasBlockingError());
-    CHECK(package->plugin_path.filename() == BinaryName("shadow_code"));
-  } else {
-    CHECK(package->HasBlockingError());
-    CHECK(package->plugin_path.empty());
-    CHECK(HasMessage(*package, "noncanonical path"));
-  }
+  CHECK_FALSE(package->HasBlockingError());
+  CHECK(package->plugin_path ==
+        package_root / "code" / CurrentPlatform() / BinaryName("shadow_code"));
 }
 
 TEST_CASE("qualified current nonregular payload blocks release fallback", "[mod_catalog]") {
@@ -382,58 +424,6 @@ TEST_CASE("invalid folder identity cannot shadow a valid package", "[mod_catalog
   REQUIRE(package != nullptr);
   CHECK(package->folder_name == "real-id");
   CHECK_FALSE(package->HasBlockingError());
-}
-
-TEST_CASE("enabled_mods selection preserves exact order", "[mod_catalog]") {
-  TempDirectory temp("rex_mod_selection_order");
-  WriteManifest(temp.path() / "first", "first", "first_code");
-  WriteManifest(temp.path() / "second", "second", "second_code");
-  auto catalog = rex::system::DiscoverModCatalog(temp.path(), "1.0.0");
-
-  auto selection = rex::system::SelectEnabledMods(catalog, " second, first ");
-  REQUIRE(selection.IsValid());
-  REQUIRE(selection.packages.size() == 2);
-  CHECK(selection.packages[0].id == "second");
-  CHECK(selection.packages[1].id == "first");
-}
-
-TEST_CASE("enabled_mods selection reports every blocking entry", "[mod_catalog]") {
-  TempDirectory temp("rex_mod_selection_errors");
-  WriteManifest(temp.path() / "good", "good", "good_code");
-  auto catalog = rex::system::DiscoverModCatalog(temp.path(), "1.0.0");
-
-  auto selection = rex::system::SelectEnabledMods(catalog, "missing,good,good,bad_name");
-  CHECK_FALSE(selection.IsValid());
-  CHECK(selection.packages.size() == 1);
-  REQUIRE(selection.diagnostics.size() == 3);
-  CHECK(selection.diagnostics[0].message.find("missing") != std::string::npos);
-  CHECK(selection.diagnostics[1].message.find("repeats") != std::string::npos);
-  CHECK(selection.diagnostics[2].message.find("bad_name") != std::string::npos);
-}
-
-TEST_CASE("catalog blocking diagnostics fail closed for valid requested packages",
-          "[mod_catalog]") {
-  TempDirectory temp("rex_mod_selection_catalog_error");
-  WriteManifest(temp.path() / "good", "good", "good_code");
-  auto catalog = rex::system::DiscoverModCatalog(temp.path(), "1.0.0");
-  catalog.diagnostics.push_back({rex::system::ModDiagnosticSeverity::kError, true,
-                                 "catalog enumeration failed", catalog.mods_root});
-
-  auto selection = rex::system::SelectEnabledMods(catalog, "good");
-  CHECK_FALSE(selection.IsValid());
-  REQUIRE(selection.packages.size() == 1);
-  REQUIRE(selection.diagnostics.size() == 1);
-  CHECK(selection.diagnostics.front().message == "catalog enumeration failed");
-}
-
-TEST_CASE("empty enabled_mods selects no packages", "[mod_catalog]") {
-  TempDirectory temp("rex_mod_selection_empty");
-  WriteManifest(temp.path() / "installed", "installed", "installed_code");
-  auto catalog = rex::system::DiscoverModCatalog(temp.path(), "1.0.0");
-
-  auto selection = rex::system::SelectEnabledMods(catalog, "  , , ");
-  CHECK(selection.IsValid());
-  CHECK(selection.packages.empty());
 }
 
 TEST_CASE("package ID and strict version grammar are enforced", "[mod_catalog]") {
@@ -529,9 +519,12 @@ TEST_CASE("disabled invalid packages stay visible but selected invalid packages 
   REQUIRE(catalog.Find("invalid-package") != nullptr);
   CHECK(catalog.Find("invalid-package")->HasBlockingError());
   CHECK(catalog.Find("invalid-package")->status == rex::system::ModPackageStatus::kInvalidManifest);
-  CHECK(rex::system::SelectEnabledMods(catalog, "").IsValid());
-  CHECK(rex::system::SelectEnabledMods(catalog, "valid-package").IsValid());
-  CHECK_FALSE(rex::system::SelectEnabledMods(catalog, "invalid-package").IsValid());
+  CHECK(rex::system::SelectModLoadout(catalog, rex::system::ReadModLoadout(temp.path())).IsValid());
+  std::ofstream(temp.path() / "mod_order.txt") << "valid-package\n";
+  CHECK(rex::system::SelectModLoadout(catalog, rex::system::ReadModLoadout(temp.path())).IsValid());
+  std::ofstream(temp.path() / "mod_order.txt") << "invalid-package\n";
+  CHECK_FALSE(
+      rex::system::SelectModLoadout(catalog, rex::system::ReadModLoadout(temp.path())).IsValid());
 }
 
 TEST_CASE("catalog rejects linked package paths without traversing them", "[mod_catalog]") {

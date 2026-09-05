@@ -1,6 +1,6 @@
 /**
  * @file        rex/ui/overlay/mod_manager_overlay.h
- * @brief       Read-only overlay listing enabled mods in load order
+ * @brief       Profile-local mod loadout manager overlay
  *
  * @copyright   Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
  *              All rights reserved.
@@ -11,11 +11,14 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <rex/system/mod_catalog.h>
+#include <rex/system/mod_loadout.h>
 #include <rex/ui/imgui_dialog.h>
 
 namespace rex {
@@ -30,18 +33,32 @@ class ImmediateTexture;
 class ModManagerDialog : public ImGuiDialog {
  public:
   ModManagerDialog(ImGuiDrawer* imgui_drawer, ImmediateDrawer* immediate_drawer,
-                   rex::Runtime* runtime);
+                   rex::Runtime* runtime, std::function<void()> close_callback = {});
   ~ModManagerDialog() override;
+
+  // Returns true when the manager can close immediately. If staged edits are
+  // present, the dialog opens a discard confirmation and returns false.
+  bool RequestClose();
 
  protected:
   void OnDraw(ImGuiIO& io) override;
 
  private:
   ImmediateTexture* GetIcon(const rex::system::ModPackage& mod);
+  bool IsDirty() const;
+  void ClearStaleStatus();
+  void DrawDiscardPopup();
+  void DrawReplacementPopup();
+  void ApplyStaged(bool replace_invalid_current);
 
   ImmediateDrawer* immediate_drawer_ = nullptr;
   rex::Runtime* runtime_ = nullptr;
+  std::function<void()> close_callback_;
   std::unordered_map<std::string, std::unique_ptr<ImmediateTexture>> icon_cache_;
+  std::vector<std::string> staged_ids_;
+  bool discard_popup_ = false;
+  bool replacement_popup_ = false;
+  std::string status_message_;
 };
 
 }  // namespace rex::ui

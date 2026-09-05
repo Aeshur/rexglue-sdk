@@ -238,7 +238,7 @@ TEST_CASE("profile copy publishes the exact SDK allowlist once", "[profile]") {
             "shared marketplace header");
   WriteFile(base / title / "profile" / "User" / "settings.bin", "profile bytes");
   WriteFile(base / "achievements" / (title + ".toml"), "achievement bytes");
-  WriteFile(base / "mod-loadout.toml", "mod-loadout bytes");
+  WriteFile(base / "mod_order.txt", "mod-order bytes");
 
   // These sentinels exercise the non-recursive allowlist boundary.
   WriteFile(base / "unrelated.sentinel", "do not copy");
@@ -262,7 +262,7 @@ TEST_CASE("profile copy publishes the exact SDK allowlist once", "[profile]") {
                  "save-one.header") == "header bytes");
   CHECK(ReadFile(target / title / "profile" / "User" / "settings.bin") == "profile bytes");
   CHECK(ReadFile(target / "achievements" / (title + ".toml")) == "achievement bytes");
-  CHECK(ReadFile(target / "mod-loadout.toml") == "mod-loadout bytes");
+  CHECK(ReadFile(target / "mod_order.txt") == "mod-order bytes");
   CHECK_FALSE(fs::exists(target / "B13EBABEBABEBABE" / title / "00000002"));
   CHECK_FALSE(fs::exists(target / "0000000000000000"));
   CHECK_FALSE(fs::exists(target / "unrelated.sentinel"));

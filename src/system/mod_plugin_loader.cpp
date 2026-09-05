@@ -111,15 +111,13 @@ std::unique_ptr<IModPlugin> LoadModPlugin(const std::filesystem::path& mod_root,
     postfix = "rd";
   }
 
+  const std::string_view platform_dir = ModPlatformDir();
+  if (platform_dir.empty()) {
+    REXSYS_ERROR("Mod '{}' has no supported native runtime platform", mod_name);
+    return nullptr;
+  }
   auto resolve = [&](std::string_view candidate_postfix) {
-    std::string_view platform_dir = ModPlatformDir();
-    if (!platform_dir.empty()) {
-      auto platform_path = code_dir / platform_dir / ModFileName(code_stem, candidate_postfix);
-      if (std::filesystem::exists(platform_path)) {
-        return platform_path;
-      }
-    }
-    return code_dir / ModFileName(code_stem, candidate_postfix);
+    return code_dir / platform_dir / ModFileName(code_stem, candidate_postfix);
   };
 
   std::string_view resolved_postfix = postfix;

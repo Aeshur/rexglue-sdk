@@ -434,43 +434,22 @@ ModPackage ParsePackage(const std::filesystem::path& mod_root, std::string_view 
                 package.runtime_platform) != package.available_platforms.end()) {
     const auto platform_root = code_root / package.runtime_platform;
     const auto config_postfix = ConfigPostfix();
-    const auto qualified_current =
-        platform_root /
-        BinaryNameForPlatform(package.runtime_platform, package.code, config_postfix);
-    const auto qualified_release =
-        platform_root / BinaryNameForPlatform(package.runtime_platform, package.code, "");
-
-    auto resolve_loader_path = [&](std::string_view postfix, std::error_code& resolve_error) {
-      const auto qualified =
-          platform_root / BinaryNameForPlatform(package.runtime_platform, package.code, postfix);
-      if (std::filesystem::exists(qualified, resolve_error) || resolve_error) {
-        return qualified;
-      }
-      const auto flat =
-          code_root / BinaryNameForPlatform(package.runtime_platform, package.code, postfix);
-      std::filesystem::exists(flat, resolve_error);
-      return flat;
-    };
 
     std::error_code resolve_error;
-    auto loader_path = resolve_loader_path(config_postfix, resolve_error);
-    bool loader_path_exists = false;
-    if (!resolve_error) {
+    auto loader_path = platform_root / BinaryNameForPlatform(package.runtime_platform, package.code,
+                                                             config_postfix);
+    bool loader_path_exists = std::filesystem::exists(loader_path, resolve_error);
+    if (!resolve_error && !config_postfix.empty() && !loader_path_exists) {
+      loader_path =
+          platform_root / BinaryNameForPlatform(package.runtime_platform, package.code, "");
       loader_path_exists = std::filesystem::exists(loader_path, resolve_error);
-      if (!resolve_error && !config_postfix.empty() && !loader_path_exists) {
-        loader_path = resolve_loader_path("", resolve_error);
-        if (!resolve_error) {
-          loader_path_exists = std::filesystem::exists(loader_path, resolve_error);
-        }
-      }
     }
 
     if (resolve_error) {
       AddDiagnostic(package, ModDiagnosticSeverity::kError, true,
                     "failed to resolve native payload for loader: " + resolve_error.message(),
                     code_root);
-    } else if (loader_path_exists &&
-               (loader_path == qualified_current || loader_path == qualified_release)) {
+    } else if (loader_path_exists) {
       std::error_code candidate_error;
       const auto candidate_status = std::filesystem::symlink_status(loader_path, candidate_error);
       if (!candidate_error && !std::filesystem::is_symlink(candidate_status) &&
@@ -482,11 +461,6 @@ ModPackage ParsePackage(const std::filesystem::path& mod_root, std::string_view 
                       "loader-selected native payload is not a regular non-linked file",
                       loader_path);
       }
-    } else if (loader_path_exists) {
-      AddDiagnostic(package, ModDiagnosticSeverity::kError, true,
-                    "loader resolves native payload to noncanonical path; qualified payload is "
-                    "required",
-                    loader_path);
     }
   }
   if (!package.platform_compatible) {
@@ -540,26 +514,6 @@ bool IsValidModPackageId(std::string_view id) {
 bool ModPackage::HasBlockingError() const {
   return std::any_of(diagnostics.begin(), diagnostics.end(),
                      [](const ModDiagnostic& diagnostic) { return diagnostic.blocking; });
-}
-
-std::string ModPackage::StatusText() const {
-  switch (status) {
-    case ModPackageStatus::kInvalidManifest:
-      return "invalid manifest";
-    case ModPackageStatus::kIncompatibleGameVersion:
-      return "incompatible game version";
-    case ModPackageStatus::kUnsupportedPlatform:
-      return "unsupported platform";
-    case ModPackageStatus::kMissingPayload:
-      return "missing native payload";
-    case ModPackageStatus::kPluginAbiMismatch:
-      return "plugin ABI mismatch";
-    case ModPackageStatus::kReady:
-      return active ? "active" : (desired ? "enabled" : "disabled");
-    case ModPackageStatus::kLoadFailed:
-      return "native load failed";
-  }
-  return "unknown";
 }
 
 const ModPackage* ModCatalog::Find(std::string_view id) const {

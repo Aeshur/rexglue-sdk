@@ -82,7 +82,6 @@ struct ModPackage {
   std::vector<ModDiagnostic> diagnostics;
 
   bool HasBlockingError() const;
-  std::string StatusText() const;
 };
 
 struct ModCatalog {

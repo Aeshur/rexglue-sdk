@@ -29,7 +29,7 @@ constexpr std::string_view kProfilesDirectory = "profiles";
 constexpr std::string_view kHeadersDirectory = "Headers";
 constexpr std::string_view kMarketplaceContentType = "00000002";
 constexpr std::string_view kAchievementDirectory = "achievements";
-constexpr std::string_view kModLoadoutFile = "mod-loadout.toml";
+constexpr std::string_view kModLoadoutFile = "mod_order.txt";
 
 enum class EntryState {
   kMissing,

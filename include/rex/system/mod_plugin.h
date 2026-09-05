@@ -68,9 +68,9 @@ class IModPlugin {
 using ModAbiVersionFn = uint32_t (*)();
 using ModCreateFn = IModPlugin* (*)(uint32_t abi_version, const ModHostContext* context);
 
-// Loads a native plugin from code/<platform>/, with a legacy flat code/
-// fallback. Failures are logged with the owning mod name. The loader's ABI and
-// lifecycle are independent of catalog metadata.
+// Loads a native plugin from code/<platform>/. Failures are logged with the
+// owning mod name. The loader's ABI and lifecycle are independent of catalog
+// metadata.
 std::unique_ptr<IModPlugin> LoadModPlugin(const std::filesystem::path& mod_root,
                                           std::string_view mod_name, std::string_view code_stem,
                                           const ModHostContext& context);

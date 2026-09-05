@@ -23,7 +23,7 @@
 #include <rex/runtime.h>
 #include <rex/system/export_resolver.h>
 #include <rex/system/kernel_state.h>
-#include <rex/system/mod_config.h>
+#include <rex/system/mod_loadout.h>
 #include <rex/system/function_dispatcher.h>
 #include <rex/system/user_module.h>
 #include <rex/system/xmemory.h>
@@ -55,7 +55,6 @@ REXCVAR_DEFINE_STRING(update_data_root, "", "Runtime", "Override update data pat
 REXCVAR_DEFINE_STRING(cache_root, "", "Runtime", "Override shader cache path");
 REXCVAR_DEFINE_STRING(metadata_root, "", "Runtime", "Override metadata path");
 REXCVAR_DEFINE_STRING(mods_data_root, "", "Mods", "Mod folder; defaults to <executable>/mods");
-REXCVAR_DEFINE_STRING(enabled_mods, "", "Mods", "Enabled mod folder names in priority order");
 
 namespace rex {
 
@@ -208,7 +207,7 @@ X_STATUS Runtime::Setup(RuntimeConfig config) {
 
   // Tool mode analyzes title binaries without starting the host mod lifecycle.
   if (!tool_mode_) {
-    ResolveEnabledMods();
+    ResolveModLoadout();
   }
 
   // Set up VFS: game_data_root as game:/d:, update_data_root as update:
@@ -328,8 +327,14 @@ void Runtime::Shutdown() {
   file_system_.reset();
   memory_.reset();
   mod_catalog_ = {};
-  enabled_mods_info_.clear();
-  mod_selection_diagnostics_.clear();
+  active_mods_info_.clear();
+  active_mod_states_.clear();
+  failed_mod_messages_.clear();
+  mod_order_file_ = {};
+  mod_order_ids_.clear();
+  mod_loadout_diagnostics_.clear();
+  mod_order_file_invalid_ = false;
+  restart_required_ = false;
   game_version_.clear();
 
   rex::perf::Profiler::Shutdown();
@@ -340,29 +345,91 @@ uint8_t* Runtime::virtual_membase() const {
   return memory_ ? memory_->virtual_membase() : nullptr;
 }
 
-void Runtime::ResolveEnabledMods() {
+namespace {
+
+std::filesystem::path ResolvedModsRoot() {
   std::string configured_root = REXCVAR_GET(mods_data_root);
-  auto mods_root = configured_root.empty()
-                       ? rex::filesystem::GetExecutableFolder() / "mods"
-                       : std::filesystem::absolute(std::filesystem::path(configured_root));
+  return configured_root.empty()
+             ? rex::filesystem::GetExecutableFolder() / "mods"
+             : std::filesystem::absolute(std::filesystem::path(configured_root));
+}
+
+}  // namespace
+
+void Runtime::ResolveModLoadout() {
+  const auto mods_root = ResolvedModsRoot();
   mod_catalog_ = system::DiscoverModCatalog(mods_root, game_version_);
 
-  const std::string enabled = REXCVAR_GET(enabled_mods);
-  const auto selection = system::SelectEnabledMods(mod_catalog_, enabled);
-  for (size_t order = 0; order < selection.requested_ids.size(); ++order) {
-    mod_catalog_.SetDesired(selection.requested_ids[order], true, order);
+  mod_order_file_ = system::ReadModLoadout(user_data_root_);
+  const auto selection = system::SelectModLoadout(mod_catalog_, mod_order_file_);
+  mod_loadout_diagnostics_ = selection.diagnostics;
+  mod_order_file_invalid_ = mod_order_file_.exists && !selection.IsValid();
+  mod_order_ids_.clear();
+  active_mods_info_.clear();
+  for (const auto& package : mod_catalog_.packages) {
+    mod_catalog_.SetDesired(package.id, false);
   }
-  mod_selection_diagnostics_ = selection.diagnostics;
   if (selection.IsValid()) {
-    enabled_mods_info_ = selection.packages;
+    mod_order_ids_ = selection.requested_ids;
+    active_mods_info_ = selection.packages;
+    for (size_t order = 0; order < selection.requested_ids.size(); ++order) {
+      mod_catalog_.SetDesired(selection.requested_ids[order], true, order);
+    }
     return;
   }
 
   // A catalog or selection error is shown to F1 and blocks the complete
   // desired set. The game continues with no native plugins to load.
-  enabled_mods_info_.clear();
-  for (const auto& diagnostic : mod_selection_diagnostics_) {
+  for (const auto& diagnostic : mod_loadout_diagnostics_) {
     REXSYS_ERROR("Mod selection: {}", diagnostic.message);
+  }
+}
+
+system::ModLoadoutSelection Runtime::ValidateModLoadout(std::span<const std::string> ids) const {
+  return system::ValidateModLoadout(mod_catalog_, ids, user_data_root_ / system::kModOrderFileName);
+}
+
+system::ModLoadoutApplyResult Runtime::ApplyModLoadout(std::span<const std::string> ids,
+                                                       bool replace_invalid_current) {
+  auto result =
+      system::ApplyModLoadout(user_data_root_, mod_catalog_, ids, replace_invalid_current);
+  if (!result.succeeded()) {
+    return result;
+  }
+
+  mod_order_file_ = system::ReadModLoadout(user_data_root_);
+  mod_order_ids_.assign(ids.begin(), ids.end());
+  mod_loadout_diagnostics_.clear();
+  mod_order_file_invalid_ = false;
+  for (const auto& package : mod_catalog_.packages) {
+    mod_catalog_.SetDesired(package.id, false);
+  }
+  for (size_t order = 0; order < mod_order_ids_.size(); ++order) {
+    mod_catalog_.SetDesired(mod_order_ids_[order], true, order);
+  }
+  restart_required_ = true;
+  return result;
+}
+
+void Runtime::RescanModCatalog() {
+  mod_catalog_ = system::DiscoverModCatalog(ResolvedModsRoot(), game_version_);
+  mod_order_file_ = system::ReadModLoadout(user_data_root_);
+  const auto persisted = system::SelectModLoadout(mod_catalog_, mod_order_file_);
+  mod_loadout_diagnostics_ = persisted.diagnostics;
+  mod_order_file_invalid_ = mod_order_file_.exists && !persisted.IsValid();
+  if (persisted.IsValid()) {
+    mod_order_ids_ = persisted.requested_ids;
+  } else {
+    mod_order_ids_.clear();
+  }
+  for (size_t order = 0; order < mod_order_ids_.size(); ++order) {
+    mod_catalog_.SetDesired(mod_order_ids_[order], true, order);
+  }
+  for (const auto& active_mod : active_mod_states_) {
+    mod_catalog_.SetActive(active_mod.id, true, active_mod.order);
+  }
+  for (const auto& [id, message] : failed_mod_messages_) {
+    mod_catalog_.MarkLoadFailed(id, message);
   }
 }
 

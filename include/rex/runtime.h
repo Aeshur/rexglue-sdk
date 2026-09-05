@@ -13,12 +13,14 @@
 #pragma once
 
 #include <filesystem>
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -32,6 +34,7 @@
 #include <rex/system/interfaces/input.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/mod_catalog.h>
+#include <rex/system/mod_loadout.h>
 #include <rex/system/mod_plugin.h>
 #include <rex/system/xobject.h>  // object_ref
 
@@ -46,7 +49,6 @@ REXCVAR_DECLARE(std::string, update_data_root);
 REXCVAR_DECLARE(std::string, cache_root);
 REXCVAR_DECLARE(std::string, metadata_root);
 REXCVAR_DECLARE(std::string, mods_data_root);
-REXCVAR_DECLARE(std::string, enabled_mods);
 
 namespace rex {
 
@@ -153,18 +155,54 @@ class Runtime {
   const std::filesystem::path& metadata_root() const { return metadata_root_; }
   const std::string& game_version() const { return game_version_; }
 
-  // The read-only installed package catalog and the validated enabled set in
-  // the exact enabled_mods order. Native loading is performed by ReXApp.
+  // The installed package catalog and the active native set selected from the
+  // profile-local mod_order.txt. Native loading is performed by ReXApp.
+  struct ActiveModState {
+    std::string id;
+    size_t order = 0;
+  };
+
   const system::ModCatalog& mod_catalog() const { return mod_catalog_; }
-  const std::vector<system::ModPackage>& enabled_mods_info() const { return enabled_mods_info_; }
-  const std::vector<system::ModDiagnostic>& mod_selection_diagnostics() const {
-    return mod_selection_diagnostics_;
+  const std::vector<system::ModPackage>& active_mods_info() const { return active_mods_info_; }
+  const std::vector<ActiveModState>& active_mod_states() const { return active_mod_states_; }
+  const std::vector<std::string>& mod_order_ids() const { return mod_order_ids_; }
+  const std::vector<system::ModLoadoutDiagnostic>& mod_loadout_diagnostics() const {
+    return mod_loadout_diagnostics_;
   }
+  bool mod_order_file_exists() const { return mod_order_file_.exists; }
+  bool mod_order_file_invalid() const { return mod_order_file_invalid_; }
+  bool restart_required() const { return restart_required_; }
+  system::ModLoadoutSelection ValidateModLoadout(std::span<const std::string> ids) const;
+  system::ModLoadoutApplyResult ApplyModLoadout(std::span<const std::string> ids,
+                                                bool replace_invalid_current = false);
+  void RescanModCatalog();
   void MarkModActive(std::string_view id, bool active, std::optional<size_t> order = std::nullopt) {
     mod_catalog_.SetActive(id, active, order);
+    if (active) {
+      const std::string key(id);
+      failed_mod_messages_.erase(key);
+      auto active_it =
+          std::find_if(active_mod_states_.begin(), active_mod_states_.end(),
+                       [&key](const ActiveModState& state) { return state.id == key; });
+      if (active_it == active_mod_states_.end()) {
+        active_mod_states_.push_back({key, order.value_or(active_mod_states_.size())});
+      } else if (order) {
+        active_it->order = *order;
+      }
+    } else {
+      active_mod_states_.erase(
+          std::remove_if(active_mod_states_.begin(), active_mod_states_.end(),
+                         [id](const ActiveModState& state) { return state.id == id; }),
+          active_mod_states_.end());
+    }
   }
   void MarkModLoadFailed(std::string_view id, std::string message) {
+    failed_mod_messages_[std::string(id)] = message;
     mod_catalog_.MarkLoadFailed(id, std::move(message));
+    active_mod_states_.erase(
+        std::remove_if(active_mod_states_.begin(), active_mod_states_.end(),
+                       [id](const ActiveModState& state) { return state.id == id; }),
+        active_mod_states_.end());
   }
 
   // Finds a metadata file or directory. An explicit metadata_root disables
@@ -215,7 +253,7 @@ class Runtime {
  private:
   // Set up VFS: mounts game_data_root as game:/d:, update_data_root as update:
   bool SetupVfs();
-  void ResolveEnabledMods();
+  void ResolveModLoadout();
 
   std::filesystem::path game_data_root_;
   std::filesystem::path base_user_data_root_;
@@ -225,8 +263,14 @@ class Runtime {
   std::filesystem::path metadata_root_;
   std::string game_version_;
   system::ModCatalog mod_catalog_;
-  std::vector<system::ModPackage> enabled_mods_info_;
-  std::vector<system::ModDiagnostic> mod_selection_diagnostics_;
+  system::ModLoadoutFile mod_order_file_;
+  std::vector<system::ModPackage> active_mods_info_;
+  std::vector<ActiveModState> active_mod_states_;
+  std::unordered_map<std::string, std::string> failed_mod_messages_;
+  std::vector<std::string> mod_order_ids_;
+  std::vector<system::ModLoadoutDiagnostic> mod_loadout_diagnostics_;
+  bool mod_order_file_invalid_ = false;
+  bool restart_required_ = false;
 
   ui::WindowedAppContext* app_context_ = nullptr;
   ui::Window* display_window_ = nullptr;

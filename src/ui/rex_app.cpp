@@ -450,7 +450,7 @@ bool ReXApp::ConstructRuntime(const PathConfig& paths) {
     }
   }
 
-  mod_infos_ = runtime_->enabled_mods_info();
+  mod_infos_ = runtime_->active_mods_info();
   mod_root_strings_.clear();
   mod_root_strings_.reserve(mod_infos_.size());
   for (const auto& mod : mod_infos_) {
@@ -600,10 +600,15 @@ void ReXApp::SetupOverlays(rex::ui::Presenter* presenter, rex::ui::ImmediateDraw
   });
   rex::ui::RegisterBind("bind_mod_manager", "F1", "Toggle mod manager overlay", [this, drawer] {
     if (mod_manager_overlay_) {
-      mod_manager_overlay_.reset();
+      auto* dialog = static_cast<ui::ModManagerDialog*>(mod_manager_overlay_.get());
+      if (dialog->RequestClose()) {
+        mod_manager_overlay_.reset();
+      }
     } else {
-      mod_manager_overlay_ =
-          std::make_unique<ui::ModManagerDialog>(imgui_drawer_.get(), drawer, runtime_.get());
+      mod_manager_overlay_ = std::make_unique<ui::ModManagerDialog>(
+          imgui_drawer_.get(), drawer, runtime_.get(), [this]() {
+            app_context().CallInUIThreadDeferred([this]() { mod_manager_overlay_.reset(); });
+          });
     }
   });
   rex::ui::RegisterBind("bind_achievements", "F7", "Toggle achievements overlay", [this] {
