@@ -56,6 +56,7 @@ class ModManagerDialog : public ImGuiDialog {
   std::function<void()> close_callback_;
   std::unordered_map<std::string, std::unique_ptr<ImmediateTexture>> icon_cache_;
   std::vector<std::string> staged_ids_;
+  bool editing_load_order_ = false;
   bool discard_popup_ = false;
   bool replacement_popup_ = false;
   std::string status_message_;
