@@ -29,6 +29,7 @@ set(REXUI_OVERLAY_SOURCES
     overlay/console_overlay.cpp
     overlay/console_commands.cpp
     overlay/mod_manager_overlay.cpp
+    overlay/asset_overlay_manager.cpp
     overlay/settings_overlay.cpp
 )
 
@@ -174,4 +175,3 @@ endif()
 if(REXGLUE_USE_D3D12)
     target_link_libraries(rexui PUBLIC dxc-headers)
 endif()
-

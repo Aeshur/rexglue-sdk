@@ -46,6 +46,9 @@ set(REXSYSTEM_SOURCES
     function_dispatcher.cpp
     gpu_plugin_loader.cpp
     mod_catalog.cpp
+    asset_overlay.cpp
+    asset_overlay_catalog.cpp
+    asset_overlay_loadout.cpp
     mod_loadout.cpp
     mod_plugin_loader.cpp
     thread.cpp

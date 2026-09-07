@@ -80,3 +80,31 @@ reload packages.
 
 Native plugins retain the `rex_mod_create`, `rex_mod_abi_version`,
 `OnCreateDialogs`, `OnModuleLaunched`, and `OnShutdown` ABI and lifecycle.
+
+## Asset overrides
+
+Asset overrides are a separate package and loadout system. The runtime discovers
+direct-child packages under `asset-overrides/` beside the executable:
+
+```text
+asset-overrides/<id>/
+  asset-pack.toml
+  assets/<logical-key>
+```
+
+Each `asset-pack.toml` uses `manifest_version = 1` and an `[asset_pack]` table
+with required `id`, `name`, and `version` fields plus optional `author` and
+`description`. The package folder must match `id`. The `assets/` tree must be
+safe, contain no links or reparse points, and contain at least one regular
+file. Asset packs contain no native code and do not use the gameplay plugin
+ABI.
+
+The active profile owns `asset_order.txt`, independently of the gameplay
+`mod_order.txt`. Each nonempty line is one package ID in priority order. The
+top line is highest priority; the resolver checks it first and returns the first
+present regular file for a logical key under `assets/`. It copies the bytes and
+reports the winning package plus lower-priority shadowed regular files. Missing
+files fall through. A present unsafe, unreadable, or oversized winning file is
+an error and never falls through. Saving an asset loadout is atomic and takes
+effect after restart; the Asset Overrides entry in the F1 Mods window stages
+enable and priority changes independently from gameplay mod order.

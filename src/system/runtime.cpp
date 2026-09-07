@@ -22,6 +22,8 @@
 #include <rex/kernel/crt/heap.h>
 #include <rex/runtime.h>
 #include <rex/system/export_resolver.h>
+#include <rex/system/asset_overlay_catalog.h>
+#include <rex/system/asset_overlay_loadout.h>
 #include <rex/system/kernel_state.h>
 #include <rex/system/mod_loadout.h>
 #include <rex/system/function_dispatcher.h>
@@ -208,6 +210,7 @@ X_STATUS Runtime::Setup(RuntimeConfig config) {
   // Tool mode analyzes title binaries without starting the host mod lifecycle.
   if (!tool_mode_) {
     ResolveModLoadout();
+    ResolveAssetOverlayLoadout();
   }
 
   // Set up VFS: game_data_root as game:/d:, update_data_root as update:
@@ -335,6 +338,13 @@ void Runtime::Shutdown() {
   mod_loadout_diagnostics_.clear();
   mod_order_file_invalid_ = false;
   restart_required_ = false;
+  asset_overlay_catalog_ = {};
+  asset_order_file_ = {};
+  active_asset_overlays_.clear();
+  asset_order_ids_.clear();
+  asset_loadout_diagnostics_.clear();
+  asset_order_file_invalid_ = false;
+  asset_overlay_restart_required_ = false;
   game_version_.clear();
 
   rex::perf::Profiler::Shutdown();
@@ -352,6 +362,10 @@ std::filesystem::path ResolvedModsRoot() {
   return configured_root.empty()
              ? rex::filesystem::GetExecutableFolder() / "mods"
              : std::filesystem::absolute(std::filesystem::path(configured_root));
+}
+
+std::filesystem::path ResolvedAssetOverlaysRoot() {
+  return rex::filesystem::GetExecutableFolder() / "asset-overrides";
 }
 
 }  // namespace
@@ -431,6 +445,62 @@ void Runtime::RescanModCatalog() {
   for (const auto& [id, message] : failed_mod_messages_) {
     mod_catalog_.MarkLoadFailed(id, message);
   }
+}
+
+void Runtime::ResolveAssetOverlayLoadout() {
+  asset_overlay_catalog_ = system::DiscoverAssetOverlayCatalog(ResolvedAssetOverlaysRoot());
+  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_);
+  const auto selection =
+      system::SelectAssetOverlayLoadout(asset_overlay_catalog_, asset_order_file_);
+  asset_loadout_diagnostics_ = selection.diagnostics;
+  asset_order_file_invalid_ = asset_order_file_.exists && !selection.IsValid();
+  asset_order_ids_.clear();
+  active_asset_overlays_.clear();
+  if (selection.IsValid()) {
+    asset_order_ids_ = selection.requested_ids;
+    active_asset_overlays_ = selection.packages;
+    return;
+  }
+  for (const auto& diagnostic : asset_loadout_diagnostics_) {
+    REXSYS_ERROR("Asset overlay selection: {}", diagnostic.message);
+  }
+}
+
+system::AssetOverlayLoadoutSelection Runtime::ValidateAssetOverlayLoadout(
+    std::span<const std::string> ids) const {
+  return system::ValidateAssetOverlayLoadout(asset_overlay_catalog_, ids,
+                                             user_data_root_ / system::kAssetOverlayOrderFileName);
+}
+
+system::AssetOverlayLoadoutApplyResult Runtime::ApplyAssetOverlayLoadout(
+    std::span<const std::string> ids, bool replace_invalid_current) {
+  auto result = system::ApplyAssetOverlayLoadout(user_data_root_, asset_overlay_catalog_, ids,
+                                                 replace_invalid_current);
+  if (!result.succeeded()) {
+    return result;
+  }
+  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_);
+  asset_order_ids_.assign(ids.begin(), ids.end());
+  asset_loadout_diagnostics_.clear();
+  asset_order_file_invalid_ = false;
+  asset_overlay_restart_required_ = true;
+  return result;
+}
+
+void Runtime::RescanAssetOverlayCatalog() {
+  const auto active_packages = active_asset_overlays_;
+  asset_overlay_catalog_ = system::DiscoverAssetOverlayCatalog(ResolvedAssetOverlaysRoot());
+  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_);
+  const auto persisted =
+      system::SelectAssetOverlayLoadout(asset_overlay_catalog_, asset_order_file_);
+  asset_loadout_diagnostics_ = persisted.diagnostics;
+  asset_order_file_invalid_ = asset_order_file_.exists && !persisted.IsValid();
+  if (persisted.IsValid()) {
+    asset_order_ids_ = persisted.requested_ids;
+  } else {
+    asset_order_ids_.clear();
+  }
+  active_asset_overlays_ = active_packages;
 }
 
 bool Runtime::SetupVfs() {

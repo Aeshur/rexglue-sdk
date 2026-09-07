@@ -44,6 +44,11 @@ ModManagerDialog::ModManagerDialog(ImGuiDrawer* imgui_drawer, ImmediateDrawer* i
       close_callback_(std::move(close_callback)) {
   if (runtime_) {
     staged_ids_ = runtime_->mod_order_ids();
+    asset_manager_ = std::make_unique<AssetOverlayManagerPane>(runtime_, [this]() {
+      if (close_callback_) {
+        close_callback_();
+      }
+    });
   }
 }
 
@@ -59,11 +64,11 @@ void ModManagerDialog::ClearStaleStatus() {
 }
 
 bool ModManagerDialog::RequestClose() {
-  if (!IsDirty()) {
-    return true;
+  if (IsDirty()) {
+    discard_popup_ = true;
+    return false;
   }
-  discard_popup_ = true;
-  return false;
+  return !asset_manager_ || asset_manager_->RequestClose();
 }
 
 void ModManagerDialog::ApplyStaged(bool replace_invalid_current) {
@@ -88,6 +93,7 @@ void ModManagerDialog::ApplyStaged(bool replace_invalid_current) {
 }
 
 void ModManagerDialog::DrawDiscardPopup() {
+  bool request_asset_close = false;
   if (discard_popup_) {
     ImGui::OpenPopup("Discard unsaved changes?");
   }
@@ -100,9 +106,7 @@ void ModManagerDialog::DrawDiscardPopup() {
     staged_ids_ = runtime_ ? runtime_->mod_order_ids() : std::vector<std::string>{};
     discard_popup_ = false;
     ImGui::CloseCurrentPopup();
-    if (close_callback_) {
-      close_callback_();
-    }
+    request_asset_close = asset_manager_ != nullptr;
   }
   ImGui::SameLine();
   if (ImGui::Button("Keep editing")) {
@@ -110,6 +114,14 @@ void ModManagerDialog::DrawDiscardPopup() {
     ImGui::CloseCurrentPopup();
   }
   ImGui::EndPopup();
+  if (request_asset_close && !asset_manager_->RequestClose()) {
+    return;
+  }
+  if (request_asset_close || !asset_manager_) {
+    if (close_callback_) {
+      close_callback_();
+    }
+  }
 }
 
 void ModManagerDialog::DrawReplacementPopup() {
@@ -182,287 +194,303 @@ void ModManagerDialog::OnDraw(ImGuiIO& io) {
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
 
   if (ImGui::Begin("Mods##overlay", nullptr, ImGuiWindowFlags_NoCollapse)) {
-    const auto* catalog = runtime_ ? &runtime_->mod_catalog() : nullptr;
-    const size_t installed_count = catalog ? catalog->packages.size() : 0;
-    const size_t staged_count = staged_ids_.size();
+    if (ImGui::BeginTabBar("##package-tabs")) {
+      if (ImGui::BeginTabItem("Mods")) {
+        const auto* catalog = runtime_ ? &runtime_->mod_catalog() : nullptr;
+        const size_t installed_count = catalog ? catalog->packages.size() : 0;
+        const size_t staged_count = staged_ids_.size();
 
-    if (editing_load_order_) {
-      ImGui::PushStyleColor(ImGuiCol_Text, kHeaderText);
-      ImGui::Text("Load order");
-      ImGui::PopStyleColor();
-      ImGui::TextColored(kMutedText, "Adjust the order for enabled mods.");
-    } else {
-      ImGui::PushStyleColor(ImGuiCol_Text, kHeaderText);
-      ImGui::Text("%zu installed | %zu enabled", installed_count, staged_count);
-      ImGui::PopStyleColor();
-      ImGui::TextColored(kMutedText, "Enable or disable mods, then save changes.");
-      if (runtime_ && ImGui::Button("Rescan installed mods")) {
-        runtime_->RescanModCatalog();
-        ClearStaleStatus();
-      }
-      if (runtime_) {
-        ImGui::SameLine();
-        if (ImGui::Button("Edit load order")) {
-          editing_load_order_ = true;
-        }
-      }
-      ImGui::Separator();
-    }
-
-    const auto staged =
-        runtime_ ? runtime_->ValidateModLoadout(staged_ids_) : rex::system::ModLoadoutSelection{};
-    const float footer_height =
-        ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y + 16.0f;
-    if (editing_load_order_) {
-      ImGui::BeginChild("##modlist", ImVec2(0.0f, -footer_height), false);
-      if (staged_ids_.empty()) {
-        ImGui::TextDisabled("No enabled mods.");
-      } else {
-        for (size_t order = 0; order < staged_ids_.size(); ++order) {
-          const std::string& id = staged_ids_[order];
-          const auto* mod = catalog ? catalog->Find(id) : nullptr;
-          const std::string display_name =
-              mod && !mod->display_name.empty() ? mod->display_name : id;
-          ImGui::PushID(static_cast<int>(order));
-          const float controls_width =
-              ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemSpacing.x;
-          const ImVec2 label_pos = ImGui::GetCursorScreenPos();
-          const float available_width = ImGui::GetContentRegionAvail().x;
-          const float controls_x = ImGui::GetCursorPosX() + available_width - controls_width;
-          ImGui::PushClipRect(label_pos,
-                              ImVec2(label_pos.x + available_width - controls_width -
-                                         ImGui::GetStyle().ItemSpacing.x,
-                                     label_pos.y + ImGui::GetFrameHeight()),
-                              true);
-          if (mod) {
-            ImGui::Text("%s", display_name.c_str());
-          } else {
-            ImGui::TextColored(kCodeBadge, "%s (unavailable)", id.c_str());
-          }
-          ImGui::PopClipRect();
-          ImGui::SameLine(controls_x);
-          if (order > 0) {
-            if (ImGui::ArrowButton("##up", ImGuiDir_Up)) {
-              std::swap(staged_ids_[order], staged_ids_[order - 1]);
-              ClearStaleStatus();
-            }
-          } else {
-            ImGui::BeginDisabled();
-            ImGui::ArrowButton("##up", ImGuiDir_Up);
-            ImGui::EndDisabled();
-          }
-          ImGui::SameLine();
-          if (order + 1 < staged_ids_.size()) {
-            if (ImGui::ArrowButton("##down", ImGuiDir_Down)) {
-              std::swap(staged_ids_[order], staged_ids_[order + 1]);
-              ClearStaleStatus();
-            }
-          } else {
-            ImGui::BeginDisabled();
-            ImGui::ArrowButton("##down", ImGuiDir_Down);
-            ImGui::EndDisabled();
-          }
-          ImGui::Separator();
-          ImGui::PopID();
-        }
-      }
-      ImGui::EndChild();
-    } else {
-      if (catalog) {
-        bool has_nonblocking_catalog_diagnostics = false;
-        for (const auto& diagnostic : catalog->diagnostics) {
-          if (!diagnostic.blocking) {
-            has_nonblocking_catalog_diagnostics = true;
-            break;
-          }
-        }
-        if (has_nonblocking_catalog_diagnostics) {
-          for (const auto& diagnostic : catalog->diagnostics) {
-            if (!diagnostic.blocking) {
-              ImGui::TextWrapped("%s%s", DiagnosticLabel(diagnostic), diagnostic.message.c_str());
-            }
-          }
-          ImGui::Separator();
-        }
-      }
-
-      if (runtime_ && !runtime_->mod_loadout_diagnostics().empty()) {
-        ImGui::TextColored(kCodeBadge, "Current profile loadout has blocking errors:");
-        for (const auto& diagnostic : runtime_->mod_loadout_diagnostics()) {
-          if (diagnostic.line != 0) {
-            ImGui::TextWrapped("- line %zu: %s", diagnostic.line, diagnostic.message.c_str());
-          } else {
-            ImGui::TextWrapped("- %s", diagnostic.message.c_str());
-          }
-        }
-        ImGui::Separator();
-      }
-
-      if (!staged.IsValid()) {
-        ImGui::TextColored(kCodeBadge, "Selected loadout has errors:");
-        for (const auto& diagnostic : staged.diagnostics) {
-          if (diagnostic.line != 0) {
-            ImGui::TextWrapped("- line %zu: %s", diagnostic.line, diagnostic.message.c_str());
-          } else {
-            ImGui::TextWrapped("- %s", diagnostic.message.c_str());
-          }
-        }
-        ImGui::Separator();
-      }
-
-      std::vector<std::string> unavailable_staged_ids;
-      if (catalog) {
-        for (const auto& id : staged_ids_) {
-          if (!catalog->Find(id)) {
-            unavailable_staged_ids.push_back(id);
-          }
-        }
-      }
-      const bool has_unavailable_active =
-          runtime_ &&
-          std::any_of(
-              runtime_->active_mod_states().begin(), runtime_->active_mod_states().end(),
-              [catalog](const auto& state) { return !catalog || !catalog->Find(state.id); });
-
-      if ((!catalog || catalog->packages.empty()) && unavailable_staged_ids.empty() &&
-          !has_unavailable_active) {
-        ImGui::TextDisabled("No installed mod packages.");
-      } else {
-        ImGui::BeginChild("##modlist", ImVec2(0.0f, -footer_height), false);
-        for (const auto& id : unavailable_staged_ids) {
-          ImGui::PushID(("unavailable:" + id).c_str());
-          ImGui::TextColored(kCodeBadge, "Unavailable enabled package: %s", id.c_str());
-          ImGui::SameLine();
-          if (ImGui::SmallButton("remove")) {
-            staged_ids_.erase(std::remove(staged_ids_.begin(), staged_ids_.end(), id),
-                              staged_ids_.end());
+        if (editing_load_order_) {
+          ImGui::PushStyleColor(ImGuiCol_Text, kHeaderText);
+          ImGui::Text("Load order");
+          ImGui::PopStyleColor();
+          ImGui::TextColored(kMutedText, "Top = highest priority.");
+        } else {
+          ImGui::PushStyleColor(ImGuiCol_Text, kHeaderText);
+          ImGui::Text("%zu installed | %zu enabled", installed_count, staged_count);
+          ImGui::PopStyleColor();
+          ImGui::TextColored(kMutedText, "Enable or disable mods, then save changes.");
+          if (runtime_ && ImGui::Button("Rescan installed mods")) {
+            runtime_->RescanModCatalog();
             ClearStaleStatus();
           }
-          ImGui::PopID();
-        }
-        if (runtime_) {
-          for (const auto& active_mod : runtime_->active_mod_states()) {
-            if (!catalog || !catalog->Find(active_mod.id)) {
-              ImGui::TextColored(kHeaderText, "Active package unavailable: %s",
-                                 active_mod.id.c_str());
+          if (runtime_) {
+            ImGui::SameLine();
+            if (ImGui::Button("Edit load order")) {
+              editing_load_order_ = true;
             }
           }
+          ImGui::Separator();
         }
-        if (catalog) {
-          std::vector<const rex::system::ModPackage*> sorted_packages;
-          sorted_packages.reserve(catalog->packages.size());
-          for (const auto& mod : catalog->packages) {
-            sorted_packages.push_back(&mod);
-          }
-          std::sort(sorted_packages.begin(), sorted_packages.end(),
-                    [](const auto* left, const auto* right) {
-                      const std::string left_name =
-                          left->display_name.empty()
-                              ? (left->id.empty() ? left->folder_name : left->id)
-                              : left->display_name;
-                      const std::string right_name =
-                          right->display_name.empty()
-                              ? (right->id.empty() ? right->folder_name : right->id)
-                              : right->display_name;
-                      if (left_name != right_name) {
-                        return left_name < right_name;
-                      }
-                      return left->folder_name < right->folder_name;
-                    });
 
-          for (const auto* mod : sorted_packages) {
-            const std::string package_id = mod->id.empty() ? mod->folder_name : mod->id;
-            const std::string package_key = mod->mod_root.generic_string();
-            ImGui::PushID(package_key.c_str());
-            bool is_staged =
-                std::find(staged_ids_.begin(), staged_ids_.end(), package_id) != staged_ids_.end();
-            if (ImGui::Checkbox("##enabled", &is_staged)) {
-              ClearStaleStatus();
-              if (is_staged) {
-                staged_ids_.push_back(package_id);
+        const auto staged = runtime_ ? runtime_->ValidateModLoadout(staged_ids_)
+                                     : rex::system::ModLoadoutSelection{};
+        const float footer_height =
+            ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y + 16.0f;
+        if (editing_load_order_) {
+          ImGui::BeginChild("##modlist", ImVec2(0.0f, -footer_height), false);
+          if (staged_ids_.empty()) {
+            ImGui::TextDisabled("No enabled mods.");
+          } else {
+            for (size_t order = 0; order < staged_ids_.size(); ++order) {
+              const std::string& id = staged_ids_[order];
+              const auto* mod = catalog ? catalog->Find(id) : nullptr;
+              const std::string display_name =
+                  mod && !mod->display_name.empty() ? mod->display_name : id;
+              ImGui::PushID(static_cast<int>(order));
+              const float controls_width =
+                  ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+              const ImVec2 label_pos = ImGui::GetCursorScreenPos();
+              const float available_width = ImGui::GetContentRegionAvail().x;
+              const float controls_x = ImGui::GetCursorPosX() + available_width - controls_width;
+              ImGui::PushClipRect(label_pos,
+                                  ImVec2(label_pos.x + available_width - controls_width -
+                                             ImGui::GetStyle().ItemSpacing.x,
+                                         label_pos.y + ImGui::GetFrameHeight()),
+                                  true);
+              if (mod) {
+                ImGui::Text("%zu. %s", order + 1, display_name.c_str());
               } else {
-                staged_ids_.erase(std::remove(staged_ids_.begin(), staged_ids_.end(), package_id),
-                                  staged_ids_.end());
+                ImGui::TextColored(kCodeBadge, "%zu. %s (unavailable)", order + 1, id.c_str());
+              }
+              ImGui::PopClipRect();
+              ImGui::SameLine(controls_x);
+              if (order > 0) {
+                if (ImGui::ArrowButton("##up", ImGuiDir_Up)) {
+                  std::swap(staged_ids_[order], staged_ids_[order - 1]);
+                  ClearStaleStatus();
+                }
+              } else {
+                ImGui::BeginDisabled();
+                ImGui::ArrowButton("##up", ImGuiDir_Up);
+                ImGui::EndDisabled();
+              }
+              ImGui::SameLine();
+              if (order + 1 < staged_ids_.size()) {
+                if (ImGui::ArrowButton("##down", ImGuiDir_Down)) {
+                  std::swap(staged_ids_[order], staged_ids_[order + 1]);
+                  ClearStaleStatus();
+                }
+              } else {
+                ImGui::BeginDisabled();
+                ImGui::ArrowButton("##down", ImGuiDir_Down);
+                ImGui::EndDisabled();
+              }
+              ImGui::Separator();
+              ImGui::PopID();
+            }
+          }
+          ImGui::EndChild();
+        } else {
+          if (catalog) {
+            bool has_nonblocking_catalog_diagnostics = false;
+            for (const auto& diagnostic : catalog->diagnostics) {
+              if (!diagnostic.blocking) {
+                has_nonblocking_catalog_diagnostics = true;
+                break;
               }
             }
-            ImGui::SameLine();
-            if (ImmediateTexture* icon = GetIcon(*mod)) {
-              ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(icon), ImVec2(kIconSize, kIconSize),
-                                 ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
-                                 ImVec4(1, 1, 1, 1));
-            } else {
-              ImGui::Dummy(ImVec2(kIconSize, kIconSize));
+            if (has_nonblocking_catalog_diagnostics) {
+              for (const auto& diagnostic : catalog->diagnostics) {
+                if (!diagnostic.blocking) {
+                  ImGui::TextWrapped("%s%s", DiagnosticLabel(diagnostic),
+                                     diagnostic.message.c_str());
+                }
+              }
+              ImGui::Separator();
             }
-            ImGui::SameLine();
+          }
 
-            ImGui::BeginGroup();
-            const std::string display_name =
-                mod->display_name.empty() ? package_id : mod->display_name;
-            ImGui::Text("%s", display_name.c_str());
-            if (!mod->version.empty()) {
-              ImGui::SameLine();
-              ImGui::TextColored(kMutedText, "v%s", mod->version.c_str());
+          if (runtime_ && !runtime_->mod_loadout_diagnostics().empty()) {
+            ImGui::TextColored(kCodeBadge, "Current profile loadout has blocking errors:");
+            for (const auto& diagnostic : runtime_->mod_loadout_diagnostics()) {
+              if (diagnostic.line != 0) {
+                ImGui::TextWrapped("- line %zu: %s", diagnostic.line, diagnostic.message.c_str());
+              } else {
+                ImGui::TextWrapped("- %s", diagnostic.message.c_str());
+              }
             }
-            if (!mod->author.empty()) {
-              ImGui::TextColored(kMutedText, "by %s", mod->author.c_str());
-            }
-            for (const auto& diagnostic : mod->diagnostics) {
-              ImGui::TextWrapped("%s%s", DiagnosticLabel(diagnostic), diagnostic.message.c_str());
-            }
-            if (!mod->description.empty()) {
-              ImGui::TextWrapped("%s", mod->description.c_str());
-            }
-            ImGui::EndGroup();
             ImGui::Separator();
-            ImGui::PopID();
+          }
+
+          if (!staged.IsValid()) {
+            ImGui::TextColored(kCodeBadge, "Selected loadout has errors:");
+            for (const auto& diagnostic : staged.diagnostics) {
+              if (diagnostic.line != 0) {
+                ImGui::TextWrapped("- line %zu: %s", diagnostic.line, diagnostic.message.c_str());
+              } else {
+                ImGui::TextWrapped("- %s", diagnostic.message.c_str());
+              }
+            }
+            ImGui::Separator();
+          }
+
+          std::vector<std::string> unavailable_staged_ids;
+          if (catalog) {
+            for (const auto& id : staged_ids_) {
+              if (!catalog->Find(id)) {
+                unavailable_staged_ids.push_back(id);
+              }
+            }
+          }
+          const bool has_unavailable_active =
+              runtime_ &&
+              std::any_of(
+                  runtime_->active_mod_states().begin(), runtime_->active_mod_states().end(),
+                  [catalog](const auto& state) { return !catalog || !catalog->Find(state.id); });
+
+          if ((!catalog || catalog->packages.empty()) && unavailable_staged_ids.empty() &&
+              !has_unavailable_active) {
+            ImGui::TextDisabled("No installed mod packages.");
+          } else {
+            ImGui::BeginChild("##modlist", ImVec2(0.0f, -footer_height), false);
+            for (const auto& id : unavailable_staged_ids) {
+              ImGui::PushID(("unavailable:" + id).c_str());
+              ImGui::TextColored(kCodeBadge, "Unavailable enabled package: %s", id.c_str());
+              ImGui::SameLine();
+              if (ImGui::SmallButton("remove")) {
+                staged_ids_.erase(std::remove(staged_ids_.begin(), staged_ids_.end(), id),
+                                  staged_ids_.end());
+                ClearStaleStatus();
+              }
+              ImGui::PopID();
+            }
+            if (runtime_) {
+              for (const auto& active_mod : runtime_->active_mod_states()) {
+                if (!catalog || !catalog->Find(active_mod.id)) {
+                  ImGui::TextColored(kHeaderText, "Active package unavailable: %s",
+                                     active_mod.id.c_str());
+                }
+              }
+            }
+            if (catalog) {
+              std::vector<const rex::system::ModPackage*> sorted_packages;
+              sorted_packages.reserve(catalog->packages.size());
+              for (const auto& mod : catalog->packages) {
+                sorted_packages.push_back(&mod);
+              }
+              std::sort(sorted_packages.begin(), sorted_packages.end(),
+                        [](const auto* left, const auto* right) {
+                          const std::string left_name =
+                              left->display_name.empty()
+                                  ? (left->id.empty() ? left->folder_name : left->id)
+                                  : left->display_name;
+                          const std::string right_name =
+                              right->display_name.empty()
+                                  ? (right->id.empty() ? right->folder_name : right->id)
+                                  : right->display_name;
+                          if (left_name != right_name) {
+                            return left_name < right_name;
+                          }
+                          return left->folder_name < right->folder_name;
+                        });
+
+              for (const auto* mod : sorted_packages) {
+                const std::string package_id = mod->id.empty() ? mod->folder_name : mod->id;
+                const std::string package_key = mod->mod_root.generic_string();
+                ImGui::PushID(package_key.c_str());
+                bool is_staged = std::find(staged_ids_.begin(), staged_ids_.end(), package_id) !=
+                                 staged_ids_.end();
+                if (ImGui::Checkbox("##enabled", &is_staged)) {
+                  ClearStaleStatus();
+                  if (is_staged) {
+                    staged_ids_.push_back(package_id);
+                  } else {
+                    staged_ids_.erase(
+                        std::remove(staged_ids_.begin(), staged_ids_.end(), package_id),
+                        staged_ids_.end());
+                  }
+                }
+                ImGui::SameLine();
+                if (ImmediateTexture* icon = GetIcon(*mod)) {
+                  ImGui::ImageWithBg(reinterpret_cast<ImTextureID>(icon),
+                                     ImVec2(kIconSize, kIconSize), ImVec2(0, 0), ImVec2(1, 1),
+                                     ImVec4(0, 0, 0, 0), ImVec4(1, 1, 1, 1));
+                } else {
+                  ImGui::Dummy(ImVec2(kIconSize, kIconSize));
+                }
+                ImGui::SameLine();
+
+                ImGui::BeginGroup();
+                const std::string display_name =
+                    mod->display_name.empty() ? package_id : mod->display_name;
+                ImGui::Text("%s", display_name.c_str());
+                if (!mod->version.empty()) {
+                  ImGui::SameLine();
+                  ImGui::TextColored(kMutedText, "v%s", mod->version.c_str());
+                }
+                if (!mod->author.empty()) {
+                  ImGui::TextColored(kMutedText, "by %s", mod->author.c_str());
+                }
+                for (const auto& diagnostic : mod->diagnostics) {
+                  ImGui::TextWrapped("%s%s", DiagnosticLabel(diagnostic),
+                                     diagnostic.message.c_str());
+                }
+                if (!mod->description.empty()) {
+                  ImGui::TextWrapped("%s", mod->description.c_str());
+                }
+                ImGui::EndGroup();
+                ImGui::Separator();
+                ImGui::PopID();
+              }
+            }
+            ImGui::EndChild();
           }
         }
-        ImGui::EndChild();
+        ImGui::Separator();
+        const bool has_persistable_change =
+            runtime_ &&
+            (IsDirty() || !runtime_->mod_order_file_exists() || runtime_->mod_order_file_invalid());
+        const bool can_save = has_persistable_change && staged.IsValid();
+        if (editing_load_order_) {
+          if (ImGui::Button("Done")) {
+            editing_load_order_ = false;
+          }
+          ImGui::SameLine();
+        }
+        if (!can_save) {
+          ImGui::BeginDisabled();
+        }
+        if (ImGui::Button("Save changes")) {
+          if (runtime_->mod_order_file_invalid()) {
+            replacement_popup_ = true;
+          } else {
+            ApplyStaged(false);
+          }
+        }
+        if (!can_save) {
+          ImGui::EndDisabled();
+        }
+        const bool selected_loadout_invalid = runtime_ && !staged.IsValid();
+        const bool current_loadout_invalid =
+            runtime_ && !runtime_->mod_loadout_diagnostics().empty();
+        const bool has_error =
+            !status_message_.empty() || selected_loadout_invalid || current_loadout_invalid;
+        if (has_error) {
+          ImGui::SameLine();
+          if (!status_message_.empty()) {
+            ImGui::TextColored(kCodeBadge, "%s", status_message_.c_str());
+          } else if (selected_loadout_invalid) {
+            ImGui::TextColored(kCodeBadge, "Fix errors before saving.");
+          } else {
+            ImGui::TextColored(kCodeBadge, "Save changes to replace the invalid loadout.");
+          }
+        } else if (IsDirty()) {
+          ImGui::SameLine();
+          ImGui::TextColored(kMutedText, "Unsaved changes");
+        } else if (runtime_ && runtime_->restart_required()) {
+          ImGui::SameLine();
+          ImGui::TextColored(kCodeBadge, "Restart required for saved changes.");
+        }
+        ImGui::EndTabItem();
       }
-    }
-    ImGui::Separator();
-    const bool has_persistable_change =
-        runtime_ &&
-        (IsDirty() || !runtime_->mod_order_file_exists() || runtime_->mod_order_file_invalid());
-    const bool can_save = has_persistable_change && staged.IsValid();
-    if (editing_load_order_) {
-      if (ImGui::Button("Done")) {
-        editing_load_order_ = false;
+      if (ImGui::BeginTabItem("Asset Overrides")) {
+        if (asset_manager_) {
+          asset_manager_->DrawContents();
+        }
+        ImGui::EndTabItem();
       }
-      ImGui::SameLine();
-    }
-    if (!can_save) {
-      ImGui::BeginDisabled();
-    }
-    if (ImGui::Button("Save changes")) {
-      if (runtime_->mod_order_file_invalid()) {
-        replacement_popup_ = true;
-      } else {
-        ApplyStaged(false);
-      }
-    }
-    if (!can_save) {
-      ImGui::EndDisabled();
-    }
-    const bool selected_loadout_invalid = runtime_ && !staged.IsValid();
-    const bool current_loadout_invalid = runtime_ && !runtime_->mod_loadout_diagnostics().empty();
-    const bool has_error =
-        !status_message_.empty() || selected_loadout_invalid || current_loadout_invalid;
-    if (has_error) {
-      ImGui::SameLine();
-      if (!status_message_.empty()) {
-        ImGui::TextColored(kCodeBadge, "%s", status_message_.c_str());
-      } else if (selected_loadout_invalid) {
-        ImGui::TextColored(kCodeBadge, "Fix errors before saving.");
-      } else {
-        ImGui::TextColored(kCodeBadge, "Save changes to replace the invalid loadout.");
-      }
-    } else if (IsDirty()) {
-      ImGui::SameLine();
-      ImGui::TextColored(kMutedText, "Unsaved changes");
-    } else if (runtime_ && runtime_->restart_required()) {
-      ImGui::SameLine();
-      ImGui::TextColored(kCodeBadge, "Restart required for saved changes.");
+      ImGui::EndTabBar();
     }
   }
   ImGui::End();
@@ -470,6 +498,9 @@ void ModManagerDialog::OnDraw(ImGuiIO& io) {
   ImGui::PopStyleVar(2);
   DrawDiscardPopup();
   DrawReplacementPopup();
+  if (asset_manager_) {
+    asset_manager_->DrawPopups();
+  }
 }
 
 }  // namespace rex::ui

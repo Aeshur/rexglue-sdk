@@ -29,6 +29,8 @@
 #include <rex/filesystem/vfs.h>
 #include <rex/memory.h>
 #include <rex/system/export_resolver.h>
+#include <rex/system/asset_overlay_catalog.h>
+#include <rex/system/asset_overlay_loadout.h>
 #include <rex/system/interfaces/audio.h>
 #include <rex/system/interfaces/graphics.h>
 #include <rex/system/interfaces/input.h>
@@ -205,6 +207,24 @@ class Runtime {
         active_mod_states_.end());
   }
 
+  const system::AssetOverlayCatalog& asset_overlay_catalog() const {
+    return asset_overlay_catalog_;
+  }
+  const std::vector<system::AssetOverlayPackage>& active_asset_overlays() const {
+    return active_asset_overlays_;
+  }
+  const std::vector<std::string>& asset_order_ids() const { return asset_order_ids_; }
+  const std::vector<system::AssetOverlayLoadoutDiagnostic>& asset_loadout_diagnostics() const {
+    return asset_loadout_diagnostics_;
+  }
+  bool asset_order_file_exists() const { return asset_order_file_.exists; }
+  bool asset_order_file_invalid() const { return asset_order_file_invalid_; }
+  bool asset_overlay_restart_required() const { return asset_overlay_restart_required_; }
+  system::AssetOverlayLoadoutSelection ValidateAssetOverlayLoadout(
+      std::span<const std::string> ids) const;
+  system::AssetOverlayLoadoutApplyResult ApplyAssetOverlayLoadout(
+      std::span<const std::string> ids, bool replace_invalid_current = false);
+  void RescanAssetOverlayCatalog();
   // Finds a metadata file or directory. An explicit metadata_root disables
   // legacy discovery; otherwise existing project layouts remain supported.
   std::optional<std::filesystem::path> FindMetadataPath(
@@ -254,6 +274,7 @@ class Runtime {
   // Set up VFS: mounts game_data_root as game:/d:, update_data_root as update:
   bool SetupVfs();
   void ResolveModLoadout();
+  void ResolveAssetOverlayLoadout();
 
   std::filesystem::path game_data_root_;
   std::filesystem::path base_user_data_root_;
@@ -271,6 +292,13 @@ class Runtime {
   std::vector<system::ModLoadoutDiagnostic> mod_loadout_diagnostics_;
   bool mod_order_file_invalid_ = false;
   bool restart_required_ = false;
+  system::AssetOverlayCatalog asset_overlay_catalog_;
+  system::AssetOverlayLoadoutFile asset_order_file_;
+  std::vector<system::AssetOverlayPackage> active_asset_overlays_;
+  std::vector<std::string> asset_order_ids_;
+  std::vector<system::AssetOverlayLoadoutDiagnostic> asset_loadout_diagnostics_;
+  bool asset_order_file_invalid_ = false;
+  bool asset_overlay_restart_required_ = false;
 
   ui::WindowedAppContext* app_context_ = nullptr;
   ui::Window* display_window_ = nullptr;

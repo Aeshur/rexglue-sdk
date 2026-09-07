@@ -20,6 +20,7 @@
 #include <rex/system/mod_catalog.h>
 #include <rex/system/mod_loadout.h>
 #include <rex/ui/imgui_dialog.h>
+#include <rex/ui/overlay/asset_overlay_manager.h>
 
 namespace rex {
 class Runtime;
@@ -54,6 +55,7 @@ class ModManagerDialog : public ImGuiDialog {
   ImmediateDrawer* immediate_drawer_ = nullptr;
   rex::Runtime* runtime_ = nullptr;
   std::function<void()> close_callback_;
+  std::unique_ptr<AssetOverlayManagerPane> asset_manager_;
   std::unordered_map<std::string, std::unique_ptr<ImmediateTexture>> icon_cache_;
   std::vector<std::string> staged_ids_;
   bool editing_load_order_ = false;

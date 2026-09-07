@@ -19,6 +19,7 @@ add_executable(unit_tests
     system/achievement_manager_test.cpp
     system/function_dispatcher_test.cpp
     system/mod_catalog_test.cpp
+    system/asset_overlay_test.cpp
     system/mod_loadout_test.cpp
     kernel/xam/lan_system_link_test.cpp
     kernel/xam/xgi_request_test.cpp
