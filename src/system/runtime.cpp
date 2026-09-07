@@ -449,7 +449,7 @@ void Runtime::RescanModCatalog() {
 
 void Runtime::ResolveAssetOverlayLoadout() {
   asset_overlay_catalog_ = system::DiscoverAssetOverlayCatalog(ResolvedAssetOverlaysRoot());
-  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_);
+  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_, ResolvedAssetOverlaysRoot());
   const auto selection =
       system::SelectAssetOverlayLoadout(asset_overlay_catalog_, asset_order_file_);
   asset_loadout_diagnostics_ = selection.diagnostics;
@@ -479,7 +479,7 @@ system::AssetOverlayLoadoutApplyResult Runtime::ApplyAssetOverlayLoadout(
   if (!result.succeeded()) {
     return result;
   }
-  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_);
+  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_, ResolvedAssetOverlaysRoot());
   asset_order_ids_.assign(ids.begin(), ids.end());
   asset_loadout_diagnostics_.clear();
   asset_order_file_invalid_ = false;
@@ -490,7 +490,7 @@ system::AssetOverlayLoadoutApplyResult Runtime::ApplyAssetOverlayLoadout(
 void Runtime::RescanAssetOverlayCatalog() {
   const auto active_packages = active_asset_overlays_;
   asset_overlay_catalog_ = system::DiscoverAssetOverlayCatalog(ResolvedAssetOverlaysRoot());
-  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_);
+  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_, ResolvedAssetOverlaysRoot());
   const auto persisted =
       system::SelectAssetOverlayLoadout(asset_overlay_catalog_, asset_order_file_);
   asset_loadout_diagnostics_ = persisted.diagnostics;

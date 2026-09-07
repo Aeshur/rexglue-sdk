@@ -134,3 +134,81 @@ TEST_CASE("asset overlay loadout is profile-local and atomic", "[asset_overlay]"
       rex::system::ApplyAssetOverlayLoadout(invalid_profile, catalog, first, true);
   REQUIRE(replaced.succeeded());
 }
+
+TEST_CASE("asset overlay loadout falls back to the bundled default order", "[asset_overlay]") {
+  TempDirectory temp("rex_asset_overlay_default");
+  const auto overlays = temp.path() / "asset-overrides";
+  WritePack(overlays / "high", "high");
+  WritePack(overlays / "low", "low");
+  std::ofstream(overlays / "default_order.txt", std::ios::binary) << "low\nhigh\n";
+
+  const auto catalog = rex::system::DiscoverAssetOverlayCatalog(overlays);
+  const auto read = rex::system::ReadAssetOverlayLoadout(temp.path() / "profile", overlays);
+  REQUIRE_FALSE(read.exists);
+  CHECK(read.uses_bundled_default);
+  CHECK(read.source_path == overlays / "default_order.txt");
+  REQUIRE(read.entries.size() == 2);
+  CHECK(read.entries[0].id == "low");
+  CHECK(read.entries[1].id == "high");
+
+  const auto selection = rex::system::SelectAssetOverlayLoadout(catalog, read);
+  REQUIRE(selection.IsValid());
+  REQUIRE(selection.packages.size() == 2);
+  CHECK(selection.packages[0].id == "low");
+  CHECK(selection.packages[1].id == "high");
+}
+
+TEST_CASE("profile asset overlay order takes precedence over bundled default", "[asset_overlay]") {
+  TempDirectory temp("rex_asset_overlay_profile_precedence");
+  const auto overlays = temp.path() / "asset-overrides";
+  WritePack(overlays / "high", "high");
+  WritePack(overlays / "low", "low");
+  std::ofstream(overlays / "default_order.txt", std::ios::binary) << "low\nhigh\n";
+  const auto profile = temp.path() / "profile";
+  std::filesystem::create_directories(profile);
+  std::ofstream(profile / "asset_order.txt", std::ios::binary) << "high\n";
+
+  const auto read = rex::system::ReadAssetOverlayLoadout(profile, overlays);
+  REQUIRE(read.exists);
+  CHECK_FALSE(read.uses_bundled_default);
+  CHECK(read.source_path == profile / "asset_order.txt");
+  REQUIRE(read.entries.size() == 1);
+  CHECK(read.entries.front().id == "high");
+}
+
+TEST_CASE("an explicit empty profile asset order disables bundled defaults", "[asset_overlay]") {
+  TempDirectory temp("rex_asset_overlay_empty_profile");
+  const auto overlays = temp.path() / "asset-overrides";
+  WritePack(overlays / "high", "high");
+  std::ofstream(overlays / "default_order.txt", std::ios::binary) << "high\n";
+  const auto profile = temp.path() / "profile";
+  std::filesystem::create_directories(profile);
+  std::ofstream(profile / "asset_order.txt", std::ios::binary);
+
+  const auto catalog = rex::system::DiscoverAssetOverlayCatalog(overlays);
+  const auto read = rex::system::ReadAssetOverlayLoadout(profile, overlays);
+  REQUIRE(read.exists);
+  CHECK_FALSE(read.uses_bundled_default);
+  CHECK(read.entries.empty());
+  const auto selection = rex::system::SelectAssetOverlayLoadout(catalog, read);
+  CHECK(selection.IsValid());
+  CHECK(selection.packages.empty());
+}
+
+TEST_CASE("malformed bundled asset order reports diagnostics", "[asset_overlay]") {
+  TempDirectory temp("rex_asset_overlay_bad_default");
+  const auto overlays = temp.path() / "asset-overrides";
+  WritePack(overlays / "high", "high");
+  std::ofstream(overlays / "default_order.txt", std::ios::binary) << "missing\nmissing\n";
+
+  const auto catalog = rex::system::DiscoverAssetOverlayCatalog(overlays);
+  const auto read = rex::system::ReadAssetOverlayLoadout(temp.path() / "profile", overlays);
+  REQUIRE_FALSE(read.exists);
+  REQUIRE(read.uses_bundled_default);
+  const auto selection = rex::system::SelectAssetOverlayLoadout(catalog, read);
+  CHECK_FALSE(selection.IsValid());
+  CHECK(std::any_of(selection.diagnostics.begin(), selection.diagnostics.end(),
+                    [](const auto& diagnostic) {
+                      return diagnostic.message.find("default_order.txt") != std::string::npos;
+                    }));
+}

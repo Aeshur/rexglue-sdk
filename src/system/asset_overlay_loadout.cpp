@@ -90,36 +90,42 @@ bool AtomicReplace(const fs::path& temporary, const fs::path& target) {
 
 }  // namespace
 
-AssetOverlayLoadoutFile ReadAssetOverlayLoadout(const fs::path& profile_root) {
-  AssetOverlayLoadoutFile result;
-  result.path = profile_root / fs::path(kAssetOverlayOrderFileName);
+namespace {
 
-  if (profile_root.empty() || IsUnsafeExistingPath(profile_root)) {
-    result.exists = true;
-    AddDiagnostic(result.diagnostics, "active profile root is invalid", 0, profile_root);
+AssetOverlayLoadoutFile ReadOrderFile(const fs::path& profile_path, const fs::path& source_path,
+                                      bool profile_exists, bool bundled_default) {
+  AssetOverlayLoadoutFile result;
+  result.path = profile_path;
+  result.source_path = source_path;
+  result.exists = profile_exists;
+  result.uses_bundled_default = bundled_default;
+  const auto file_name =
+      bundled_default ? kAssetOverlayDefaultOrderFileName : kAssetOverlayOrderFileName;
+  const std::string file_name_text(file_name);
+
+  if (IsUnsafeExistingPath(source_path)) {
+    AddDiagnostic(result.diagnostics, file_name_text + " must be a regular file", 0, source_path);
     return result;
   }
 
   std::error_code error;
-  const auto status = fs::symlink_status(result.path, error);
+  const auto status = fs::symlink_status(source_path, error);
   if (error == std::errc::no_such_file_or_directory) {
     return result;
   }
   if (error) {
-    result.exists = true;
-    AddDiagnostic(result.diagnostics, "could not inspect asset_order.txt: " + error.message(), 0,
-                  result.path);
+    AddDiagnostic(result.diagnostics,
+                  "could not inspect " + file_name_text + ": " + error.message(), 0, source_path);
     return result;
   }
-  result.exists = true;
   if (fs::is_symlink(status) || !fs::is_regular_file(status)) {
-    AddDiagnostic(result.diagnostics, "asset_order.txt must be a regular file", 0, result.path);
+    AddDiagnostic(result.diagnostics, file_name_text + " must be a regular file", 0, source_path);
     return result;
   }
 
-  std::ifstream input(result.path, std::ios::binary);
+  std::ifstream input(source_path, std::ios::binary);
   if (!input) {
-    AddDiagnostic(result.diagnostics, "could not read asset_order.txt", 0, result.path);
+    AddDiagnostic(result.diagnostics, "could not read " + file_name_text, 0, source_path);
     return result;
   }
 
@@ -134,25 +140,78 @@ AssetOverlayLoadoutFile ReadAssetOverlayLoadout(const fs::path& profile_root) {
     result.entries.push_back({id, line_number});
     if (!IsValidAssetOverlayPackageId(id)) {
       AddDiagnostic(result.diagnostics,
-                    "asset_order.txt line " + std::to_string(line_number) +
+                    file_name_text + " line " + std::to_string(line_number) +
                         " has invalid package ID '" + id + "'",
-                    line_number, result.path);
+                    line_number, source_path);
     }
   }
   if (input.bad()) {
-    AddDiagnostic(result.diagnostics, "could not read asset_order.txt", line_number, result.path);
+    AddDiagnostic(result.diagnostics, "could not read " + file_name_text, line_number, source_path);
   }
 
   std::unordered_set<std::string> seen;
   for (const auto& entry : result.entries) {
     if (!seen.insert(entry.id).second) {
       AddDiagnostic(result.diagnostics,
-                    "asset_order.txt line " + std::to_string(entry.line) + " repeats package ID '" +
-                        entry.id + "'",
-                    entry.line, result.path);
+                    file_name_text + " line " + std::to_string(entry.line) +
+                        " repeats package ID '" + entry.id + "'",
+                    entry.line, source_path);
     }
   }
   return result;
+}
+
+}  // namespace
+
+AssetOverlayLoadoutFile ReadAssetOverlayLoadout(const fs::path& profile_root) {
+  return ReadAssetOverlayLoadout(profile_root, {});
+}
+
+AssetOverlayLoadoutFile ReadAssetOverlayLoadout(const fs::path& profile_root,
+                                                const fs::path& bundled_root) {
+  const auto profile_path = profile_root / fs::path(kAssetOverlayOrderFileName);
+  if (profile_root.empty() || IsUnsafeExistingPath(profile_root)) {
+    AssetOverlayLoadoutFile result;
+    result.path = profile_path;
+    result.source_path = profile_path;
+    result.exists = true;
+    AddDiagnostic(result.diagnostics, "active profile root is invalid", 0, profile_root);
+    return result;
+  }
+
+  std::error_code error;
+  (void)fs::symlink_status(profile_path, error);
+  if (!error) {
+    return ReadOrderFile(profile_path, profile_path, true, false);
+  }
+  if (error != std::errc::no_such_file_or_directory) {
+    return ReadOrderFile(profile_path, profile_path, true, false);
+  }
+  if (bundled_root.empty()) {
+    AssetOverlayLoadoutFile result;
+    result.path = profile_path;
+    result.source_path = profile_path;
+    return result;
+  }
+
+  const auto default_path = bundled_root / fs::path(kAssetOverlayDefaultOrderFileName);
+  std::error_code root_error;
+  const auto root_status = fs::symlink_status(bundled_root, root_error);
+  if (root_error == std::errc::no_such_file_or_directory) {
+    AssetOverlayLoadoutFile result;
+    result.path = profile_path;
+    result.source_path = default_path;
+    return result;
+  }
+  if (root_error || fs::is_symlink(root_status) || !fs::is_directory(root_status)) {
+    AssetOverlayLoadoutFile result;
+    result.path = profile_path;
+    result.source_path = default_path;
+    result.uses_bundled_default = true;
+    AddDiagnostic(result.diagnostics, "bundled asset overlay root is invalid", 0, bundled_root);
+    return result;
+  }
+  return ReadOrderFile(profile_path, default_path, false, true);
 }
 
 AssetOverlayLoadoutSelection SelectAssetOverlayLoadout(const AssetOverlayCatalog& catalog,
@@ -178,10 +237,14 @@ AssetOverlayLoadoutSelection SelectAssetOverlayLoadout(const AssetOverlayCatalog
     }
     const auto* package = catalog.Find(entry.id);
     if (!package) {
+      const auto file_name = loadout.uses_bundled_default ? kAssetOverlayDefaultOrderFileName
+                                                          : kAssetOverlayOrderFileName;
+      const auto& diagnostic_path =
+          loadout.source_path.empty() ? loadout.path : loadout.source_path;
       AddDiagnostic(result.diagnostics,
-                    "asset_order.txt line " + std::to_string(entry.line) +
+                    std::string(file_name) + " line " + std::to_string(entry.line) +
                         " refers to missing package '" + entry.id + "'",
-                    entry.line, loadout.path);
+                    entry.line, diagnostic_path);
       continue;
     }
     result.packages.push_back(*package);

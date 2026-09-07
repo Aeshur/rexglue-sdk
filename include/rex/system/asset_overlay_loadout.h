@@ -1,6 +1,6 @@
 /**
  * @file        system/asset_overlay_loadout.h
- * @brief       Profile-local ordered asset-overlay loadout
+ * @brief       Ordered asset-overlay loadout and bundled default
  */
 
 #pragma once
@@ -17,6 +17,7 @@
 namespace rex::system {
 
 inline constexpr std::string_view kAssetOverlayOrderFileName = "asset_order.txt";
+inline constexpr std::string_view kAssetOverlayDefaultOrderFileName = "default_order.txt";
 
 struct AssetOverlayLoadoutEntry {
   std::string id;
@@ -30,8 +31,16 @@ struct AssetOverlayLoadoutDiagnostic {
 };
 
 struct AssetOverlayLoadoutFile {
+  // The profile-local destination. This remains the profile path when a
+  // bundled default supplies the entries, so callers can materialize an
+  // explicit profile override without losing its destination.
   std::filesystem::path path;
+  // The file that supplied the parsed entries, when one was read.
+  std::filesystem::path source_path;
+  // True only when the profile-local asset_order.txt exists. A bundled
+  // default deliberately leaves this false so the UI can offer Save.
   bool exists = false;
+  bool uses_bundled_default = false;
   std::vector<AssetOverlayLoadoutEntry> entries;
   std::vector<AssetOverlayLoadoutDiagnostic> diagnostics;
 };
@@ -60,6 +69,11 @@ struct AssetOverlayLoadoutApplyResult {
 };
 
 AssetOverlayLoadoutFile ReadAssetOverlayLoadout(const std::filesystem::path& profile_root);
+// Reads the profile-local order when present. If it is absent, reads
+// <bundled_root>/default_order.txt. A present profile file, including an
+// explicitly empty file, always takes precedence over the bundled default.
+AssetOverlayLoadoutFile ReadAssetOverlayLoadout(const std::filesystem::path& profile_root,
+                                                const std::filesystem::path& bundled_root);
 AssetOverlayLoadoutSelection SelectAssetOverlayLoadout(const AssetOverlayCatalog& catalog,
                                                        const AssetOverlayLoadoutFile& loadout);
 AssetOverlayLoadoutSelection ValidateAssetOverlayLoadout(const AssetOverlayCatalog& catalog,

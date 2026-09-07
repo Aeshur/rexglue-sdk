@@ -100,11 +100,20 @@ file. Asset packs contain no native code and do not use the gameplay plugin
 ABI.
 
 The active profile owns `asset_order.txt`, independently of the gameplay
-`mod_order.txt`. Each nonempty line is one package ID in priority order. The
-top line is highest priority; the resolver checks it first and returns the first
-present regular file for a logical key under `assets/`. It copies the bytes and
-reports the winning package plus lower-priority shadowed regular files. Missing
-files fall through. A present unsafe, unreadable, or oversized winning file is
-an error and never falls through. Saving an asset loadout is atomic and takes
-effect after restart; the Asset Overrides entry in the F1 Mods window stages
-enable and priority changes independently from gameplay mod order.
+`mod_order.txt`. The runtime package may also ship
+`asset-overrides/default_order.txt` beside the asset-pack directories. When the
+profile has no `asset_order.txt`, this bundled file supplies the initial order;
+a profile file always wins, including an explicitly empty file. The bundled
+file is parsed and validated with the same rules as the profile file, and a
+malformed default produces diagnostics instead of being silently accepted. The
+runtime still reports that no profile file exists, so saving materializes a
+profile-local override.
+
+Each nonempty line is one package ID in priority order. The top line is highest
+priority; the resolver checks it first and returns the first present regular
+file for a logical key under `assets/`. It copies the bytes and reports the
+winning package plus lower-priority shadowed regular files. Missing files fall
+through. A present unsafe, unreadable, or oversized winning file is an error
+and never falls through. Saving an asset loadout is atomic and takes effect
+after restart; the Asset Overrides entry in the F1 Mods window stages enable
+and priority changes independently from gameplay mod order.
