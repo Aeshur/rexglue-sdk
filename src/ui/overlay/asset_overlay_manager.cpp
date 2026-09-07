@@ -123,21 +123,20 @@ void AssetOverlayManagerPane::DrawContents() {
     ImGui::PushStyleColor(ImGuiCol_Text, kHeaderText);
     ImGui::Text("Priority order");
     ImGui::PopStyleColor();
-    ImGui::TextColored(kMutedText,
-                       "Top = highest priority; the first present asset candidate wins.");
+    ImGui::TextColored(kMutedText, "Top = highest priority.");
   } else {
     ImGui::PushStyleColor(ImGuiCol_Text, kHeaderText);
     ImGui::Text("%zu installed | %zu enabled", catalog ? catalog->packages.size() : 0,
                 staged_ids_.size());
     ImGui::PopStyleColor();
     ImGui::TextColored(kMutedText, "Enable or disable asset overrides, then save changes.");
-    if (runtime_ && ImGui::Button("Rescan installed asset overrides")) {
+    if (runtime_ && ImGui::Button("Rescan")) {
       runtime_->RescanAssetOverlayCatalog();
       ClearStatus();
     }
     if (runtime_) {
       ImGui::SameLine();
-      if (ImGui::Button("Edit priority order")) {
+      if (ImGui::Button("Edit Order")) {
         editing_priority_ = true;
       }
     }

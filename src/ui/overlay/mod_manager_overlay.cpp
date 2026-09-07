@@ -210,13 +210,13 @@ void ModManagerDialog::OnDraw(ImGuiIO& io) {
           ImGui::Text("%zu installed | %zu enabled", installed_count, staged_count);
           ImGui::PopStyleColor();
           ImGui::TextColored(kMutedText, "Enable or disable mods, then save changes.");
-          if (runtime_ && ImGui::Button("Rescan installed mods")) {
+          if (runtime_ && ImGui::Button("Rescan")) {
             runtime_->RescanModCatalog();
             ClearStaleStatus();
           }
           if (runtime_) {
             ImGui::SameLine();
-            if (ImGui::Button("Edit load order")) {
+            if (ImGui::Button("Edit Order")) {
               editing_load_order_ = true;
             }
           }
