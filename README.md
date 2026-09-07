@@ -40,6 +40,8 @@ Latest SDK builds and releases are published on [GitHub Releases](https://github
 
 For quick start guide, full CLI reference, and config file options, see the [wiki](https://github.com/rexglue/rexglue-sdk/wiki).
 
+Repository-local coding conventions and verification commands are in the [SDK style guide](docs/style-guide.md).
+
 Experimental direct-LAN System Link configuration is documented in
 [Direct LAN System Link](docs/LAN_SYSTEM_LINK.md).
 
