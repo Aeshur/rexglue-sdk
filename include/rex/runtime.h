@@ -171,7 +171,7 @@ class Runtime {
   const std::vector<system::ModLoadoutDiagnostic>& mod_loadout_diagnostics() const {
     return mod_loadout_diagnostics_;
   }
-  bool mod_order_file_exists() const { return mod_order_file_.exists; }
+  bool mod_order_file_exists() const { return mod_order_file_exists_; }
   bool mod_order_file_invalid() const { return mod_order_file_invalid_; }
   bool restart_required() const { return restart_required_; }
   system::ModLoadoutSelection ValidateModLoadout(std::span<const std::string> ids) const;
@@ -217,7 +217,7 @@ class Runtime {
   const std::vector<system::AssetOverlayLoadoutDiagnostic>& asset_loadout_diagnostics() const {
     return asset_loadout_diagnostics_;
   }
-  bool asset_order_file_exists() const { return asset_order_file_.exists; }
+  bool asset_order_file_exists() const { return asset_order_file_exists_; }
   bool asset_order_file_invalid() const { return asset_order_file_invalid_; }
   bool asset_overlay_restart_required() const { return asset_overlay_restart_required_; }
   system::AssetOverlayLoadoutSelection ValidateAssetOverlayLoadout(
@@ -284,19 +284,19 @@ class Runtime {
   std::filesystem::path metadata_root_;
   std::string game_version_;
   system::ModCatalog mod_catalog_;
-  system::ModLoadoutFile mod_order_file_;
   std::vector<system::ModPackage> active_mods_info_;
   std::vector<ActiveModState> active_mod_states_;
   std::unordered_map<std::string, std::string> failed_mod_messages_;
   std::vector<std::string> mod_order_ids_;
   std::vector<system::ModLoadoutDiagnostic> mod_loadout_diagnostics_;
+  bool mod_order_file_exists_ = false;
   bool mod_order_file_invalid_ = false;
   bool restart_required_ = false;
   system::AssetOverlayCatalog asset_overlay_catalog_;
-  system::AssetOverlayLoadoutFile asset_order_file_;
   std::vector<system::AssetOverlayPackage> active_asset_overlays_;
   std::vector<std::string> asset_order_ids_;
   std::vector<system::AssetOverlayLoadoutDiagnostic> asset_loadout_diagnostics_;
+  bool asset_order_file_exists_ = false;
   bool asset_order_file_invalid_ = false;
   bool asset_overlay_restart_required_ = false;
 

@@ -333,13 +333,13 @@ void Runtime::Shutdown() {
   active_mods_info_.clear();
   active_mod_states_.clear();
   failed_mod_messages_.clear();
-  mod_order_file_ = {};
+  mod_order_file_exists_ = false;
   mod_order_ids_.clear();
   mod_loadout_diagnostics_.clear();
   mod_order_file_invalid_ = false;
   restart_required_ = false;
   asset_overlay_catalog_ = {};
-  asset_order_file_ = {};
+  asset_order_file_exists_ = false;
   active_asset_overlays_.clear();
   asset_order_ids_.clear();
   asset_loadout_diagnostics_.clear();
@@ -374,10 +374,11 @@ void Runtime::ResolveModLoadout() {
   const auto mods_root = ResolvedModsRoot();
   mod_catalog_ = system::DiscoverModCatalog(mods_root, game_version_);
 
-  mod_order_file_ = system::ReadModLoadout(user_data_root_);
-  const auto selection = system::SelectModLoadout(mod_catalog_, mod_order_file_);
+  const auto order_file = system::ReadModLoadout(user_data_root_);
+  mod_order_file_exists_ = order_file.exists;
+  const auto selection = system::SelectModLoadout(mod_catalog_, order_file);
   mod_loadout_diagnostics_ = selection.diagnostics;
-  mod_order_file_invalid_ = mod_order_file_.exists && !selection.IsValid();
+  mod_order_file_invalid_ = mod_order_file_exists_ && !selection.IsValid();
   mod_order_ids_.clear();
   active_mods_info_.clear();
   for (const auto& package : mod_catalog_.packages) {
@@ -411,7 +412,7 @@ system::ModLoadoutApplyResult Runtime::ApplyModLoadout(std::span<const std::stri
     return result;
   }
 
-  mod_order_file_ = system::ReadModLoadout(user_data_root_);
+  mod_order_file_exists_ = system::ReadModLoadout(user_data_root_).exists;
   mod_order_ids_.assign(ids.begin(), ids.end());
   mod_loadout_diagnostics_.clear();
   mod_order_file_invalid_ = false;
@@ -427,10 +428,11 @@ system::ModLoadoutApplyResult Runtime::ApplyModLoadout(std::span<const std::stri
 
 void Runtime::RescanModCatalog() {
   mod_catalog_ = system::DiscoverModCatalog(ResolvedModsRoot(), game_version_);
-  mod_order_file_ = system::ReadModLoadout(user_data_root_);
-  const auto persisted = system::SelectModLoadout(mod_catalog_, mod_order_file_);
+  const auto order_file = system::ReadModLoadout(user_data_root_);
+  mod_order_file_exists_ = order_file.exists;
+  const auto persisted = system::SelectModLoadout(mod_catalog_, order_file);
   mod_loadout_diagnostics_ = persisted.diagnostics;
-  mod_order_file_invalid_ = mod_order_file_.exists && !persisted.IsValid();
+  mod_order_file_invalid_ = mod_order_file_exists_ && !persisted.IsValid();
   if (persisted.IsValid()) {
     mod_order_ids_ = persisted.requested_ids;
   } else {
@@ -449,11 +451,12 @@ void Runtime::RescanModCatalog() {
 
 void Runtime::ResolveAssetOverlayLoadout() {
   asset_overlay_catalog_ = system::DiscoverAssetOverlayCatalog(ResolvedAssetOverlaysRoot());
-  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_, ResolvedAssetOverlaysRoot());
-  const auto selection =
-      system::SelectAssetOverlayLoadout(asset_overlay_catalog_, asset_order_file_);
+  const auto order_file =
+      system::ReadAssetOverlayLoadout(user_data_root_, ResolvedAssetOverlaysRoot());
+  asset_order_file_exists_ = order_file.exists;
+  const auto selection = system::SelectAssetOverlayLoadout(asset_overlay_catalog_, order_file);
   asset_loadout_diagnostics_ = selection.diagnostics;
-  asset_order_file_invalid_ = asset_order_file_.exists && !selection.IsValid();
+  asset_order_file_invalid_ = asset_order_file_exists_ && !selection.IsValid();
   asset_order_ids_.clear();
   active_asset_overlays_.clear();
   if (selection.IsValid()) {
@@ -479,7 +482,8 @@ system::AssetOverlayLoadoutApplyResult Runtime::ApplyAssetOverlayLoadout(
   if (!result.succeeded()) {
     return result;
   }
-  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_, ResolvedAssetOverlaysRoot());
+  asset_order_file_exists_ =
+      system::ReadAssetOverlayLoadout(user_data_root_, ResolvedAssetOverlaysRoot()).exists;
   asset_order_ids_.assign(ids.begin(), ids.end());
   asset_loadout_diagnostics_.clear();
   asset_order_file_invalid_ = false;
@@ -488,19 +492,18 @@ system::AssetOverlayLoadoutApplyResult Runtime::ApplyAssetOverlayLoadout(
 }
 
 void Runtime::RescanAssetOverlayCatalog() {
-  const auto active_packages = active_asset_overlays_;
   asset_overlay_catalog_ = system::DiscoverAssetOverlayCatalog(ResolvedAssetOverlaysRoot());
-  asset_order_file_ = system::ReadAssetOverlayLoadout(user_data_root_, ResolvedAssetOverlaysRoot());
-  const auto persisted =
-      system::SelectAssetOverlayLoadout(asset_overlay_catalog_, asset_order_file_);
+  const auto order_file =
+      system::ReadAssetOverlayLoadout(user_data_root_, ResolvedAssetOverlaysRoot());
+  asset_order_file_exists_ = order_file.exists;
+  const auto persisted = system::SelectAssetOverlayLoadout(asset_overlay_catalog_, order_file);
   asset_loadout_diagnostics_ = persisted.diagnostics;
-  asset_order_file_invalid_ = asset_order_file_.exists && !persisted.IsValid();
+  asset_order_file_invalid_ = asset_order_file_exists_ && !persisted.IsValid();
   if (persisted.IsValid()) {
     asset_order_ids_ = persisted.requested_ids;
   } else {
     asset_order_ids_.clear();
   }
-  active_asset_overlays_ = active_packages;
 }
 
 bool Runtime::SetupVfs() {

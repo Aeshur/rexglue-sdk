@@ -29,12 +29,11 @@
 
 #include <SDL3/SDL.h>
 
+#include <rex/crypto/sha256.h>
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
-
-#include "crypto/sha256.h"
 
 namespace rex::system {
 
@@ -53,27 +52,6 @@ bool HexEqual(std::string_view a, std::string_view b) {
     }
   }
   return true;
-}
-
-std::string Sha256File(const std::filesystem::path& path) {
-  std::ifstream file(path, std::ios::binary);
-  if (!file) {
-    return {};
-  }
-
-  sha256::SHA256 digest;
-  std::vector<char> chunk(256 * 1024);
-  while (file) {
-    file.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
-    const auto count = file.gcount();
-    if (count > 0) {
-      digest.add(chunk.data(), static_cast<size_t>(count));
-    }
-  }
-  if (!file.eof()) {
-    return {};
-  }
-  return digest.getHash();
 }
 
 // =============================================================================
@@ -926,7 +904,7 @@ SiblingTitleUpdateResult ExtractSiblingTitleUpdateTo(const std::filesystem::path
     }
   }
 
-  auto actual = Sha256File(xexp_path);
+  auto actual = rex::crypto::sha256_file(xexp_path);
   if (!HexEqual(actual, expected_xexp_sha256)) {
     REXLOG_ERROR("Sibling xexp SHA-256 mismatch: expected={}, actual={}", expected_xexp_sha256,
                  actual);
@@ -962,7 +940,7 @@ bool ValidateDefaultXexInDir(const std::filesystem::path& dir, std::string_view 
   if (expected.empty()) {
     return true;
   }
-  std::string actual = Sha256File(xex_path);
+  std::string actual = rex::crypto::sha256_file(xex_path);
   if (!HexEqual(actual, expected)) {
     REXLOG_ERROR("default.xex SHA-256 mismatch: expected={}, actual={}", expected, actual);
     return false;
@@ -1192,7 +1170,7 @@ static bool ProcessTitleUpdate(const std::filesystem::path& dir,
   // package.
   if (!settings.sibling_xexp_sha256.empty()) {
     if (std::filesystem::is_regular_file(xexp_path) &&
-        HexEqual(Sha256File(xexp_path), settings.sibling_xexp_sha256)) {
+        HexEqual(rex::crypto::sha256_file(xexp_path), settings.sibling_xexp_sha256)) {
       REXLOG_INFO("default.xexp verified beside default.xex");
       return true;
     }
@@ -1234,7 +1212,7 @@ static bool ProcessTitleUpdate(const std::filesystem::path& dir,
         return true;
       }
 
-      std::string actual = Sha256File(selected);
+      std::string actual = rex::crypto::sha256_file(selected);
       if (!HexEqual(actual, settings.sibling_xexp_sha256)) {
         REXLOG_ERROR("Sibling xexp SHA-256 mismatch: expected={}, actual={}",
                      settings.sibling_xexp_sha256, actual);
@@ -1350,7 +1328,7 @@ static bool ProcessTitleUpdate(const std::filesystem::path& dir,
     }
 
     // title_update_sha256 is known non-empty here — an empty one returns above.
-    std::string actual = Sha256File(selected);
+    std::string actual = rex::crypto::sha256_file(selected);
     if (!HexEqual(actual, settings.title_update_sha256)) {
       REXLOG_ERROR("TU SHA-256 mismatch: expected={}, actual={}", settings.title_update_sha256,
                    actual);
