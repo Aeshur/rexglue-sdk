@@ -239,6 +239,7 @@ TEST_CASE("profile copy publishes the exact SDK allowlist once", "[profile]") {
   WriteFile(base / title / "profile" / "User" / "settings.bin", "profile bytes");
   WriteFile(base / "achievements" / (title + ".toml"), "achievement bytes");
   WriteFile(base / "mod_order.txt", "mod-order bytes");
+  WriteFile(base / "asset_order.txt", "asset-order bytes");
 
   // These sentinels exercise the non-recursive allowlist boundary.
   WriteFile(base / "unrelated.sentinel", "do not copy");
@@ -263,6 +264,7 @@ TEST_CASE("profile copy publishes the exact SDK allowlist once", "[profile]") {
   CHECK(ReadFile(target / title / "profile" / "User" / "settings.bin") == "profile bytes");
   CHECK(ReadFile(target / "achievements" / (title + ".toml")) == "achievement bytes");
   CHECK(ReadFile(target / "mod_order.txt") == "mod-order bytes");
+  CHECK(ReadFile(target / "asset_order.txt") == "asset-order bytes");
   CHECK_FALSE(fs::exists(target / "B13EBABEBABEBABE" / title / "00000002"));
   CHECK_FALSE(fs::exists(target / "0000000000000000"));
   CHECK_FALSE(fs::exists(target / "unrelated.sentinel"));
@@ -277,6 +279,41 @@ TEST_CASE("profile copy publishes the exact SDK allowlist once", "[profile]") {
         rex::system::ProfileCopyResult::kTargetExists);
   CHECK(ReadFile(base / "rerevved.toml") == "fullscreen = false\n");
   CHECK(ReadFile(base / "unrelated.sentinel") == "do not copy");
+}
+
+TEST_CASE("profile copy preserves empty and absent asset loadouts", "[profile]") {
+  SECTION("empty asset loadout is copied") {
+    TempDirectory temp("rex_profile_copy_empty_asset_order");
+    const auto base = temp.path() / "user";
+    WriteFile(base / "rerevved.toml", "fullscreen = false\n");
+    WriteFile(base / "asset_order.txt", "");
+
+    const auto resolved = rex::system::ResolveProfile(base, "alpha");
+    REQUIRE(resolved);
+    const rex::system::ProfileCopySpecification specification{fs::path("rerevved.toml"),
+                                                              0x1234ABCD};
+    REQUIRE(rex::system::CopyFromDefault(*resolved, specification) ==
+            rex::system::ProfileCopyResult::kSuccess);
+
+    const auto copied_asset_order = resolved->active_root / "asset_order.txt";
+    CHECK(fs::exists(copied_asset_order));
+    CHECK(fs::file_size(copied_asset_order) == 0);
+  }
+
+  SECTION("absent asset loadout stays absent") {
+    TempDirectory temp("rex_profile_copy_absent_asset_order");
+    const auto base = temp.path() / "user";
+    WriteFile(base / "rerevved.toml", "fullscreen = false\n");
+
+    const auto resolved = rex::system::ResolveProfile(base, "alpha");
+    REQUIRE(resolved);
+    const rex::system::ProfileCopySpecification specification{fs::path("rerevved.toml"),
+                                                              0x1234ABCD};
+    REQUIRE(rex::system::CopyFromDefault(*resolved, specification) ==
+            rex::system::ProfileCopyResult::kSuccess);
+
+    CHECK_FALSE(fs::exists(resolved->active_root / "asset_order.txt"));
+  }
 }
 
 TEST_CASE("profile copy failures leave source and target unchanged", "[profile]") {

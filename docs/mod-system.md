@@ -78,6 +78,9 @@ their order. Closing F1 with unapplied changes requires explicit discard
 confirmation. The manager does not install, import, update, replace, delete, or
 reload packages.
 
+Copying the default profile to create a named profile includes `mod_order.txt`
+and `asset_order.txt` when present, preserving explicitly empty files.
+
 Native plugins retain the `rex_mod_create`, `rex_mod_abi_version`,
 `OnCreateDialogs`, `OnModuleLaunched`, and `OnShutdown` ABI and lifecycle.
 

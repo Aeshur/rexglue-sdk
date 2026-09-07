@@ -30,6 +30,7 @@ constexpr std::string_view kHeadersDirectory = "Headers";
 constexpr std::string_view kMarketplaceContentType = "00000002";
 constexpr std::string_view kAchievementDirectory = "achievements";
 constexpr std::string_view kModLoadoutFile = "mod_order.txt";
+constexpr std::string_view kAssetLoadoutFile = "asset_order.txt";
 
 enum class EntryState {
   kMissing,
@@ -471,6 +472,11 @@ CollectResult CollectAllowlist(const ProfilePaths& target,
   }
   result = CollectOptionalFile(target.base_root / kModLoadoutFile, fs::path(kModLoadoutFile), files,
                                destinations);
+  if (result != CollectResult::kSuccess && result != CollectResult::kMissing) {
+    return result;
+  }
+  result = CollectOptionalFile(target.base_root / kAssetLoadoutFile, fs::path(kAssetLoadoutFile),
+                               files, destinations);
   if (result != CollectResult::kSuccess && result != CollectResult::kMissing) {
     return result;
   }
